@@ -65,6 +65,8 @@ def _profile_config(profile: str) -> dict[str, object]:
         "username": os.getenv(f"{prefix}_USERNAME", "default"),
         "password": os.getenv(f"{prefix}_PASSWORD", ""),
         "secure": secure,
+        "connect_timeout": 30,
+        "send_receive_timeout": 600,  # heavy reads/inserts over Tailscale can be slow
     }
     if secure:
         # Use certifi's CA bundle; the macOS system Python often can't locate one.

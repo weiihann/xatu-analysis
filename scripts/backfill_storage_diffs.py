@@ -12,12 +12,17 @@ Run with:  uv run python -m scripts.backfill_storage_diffs
 
 from __future__ import annotations
 
+import time
+
+from clickhouse_connect.driver.exceptions import OperationalError
+
 from lib.clickhouse import get_client
 
 NETWORK = "mainnet"
 TABLE = "canonical_execution_storage_diffs"
 CHUNK_BLOCKS = 2_000
 COMPLETE_THRESHOLD = 0.95  # skip a chunk already at least this covered on the target
+MAX_ATTEMPTS = 5           # transient Tailscale/HTTP stalls are retried with reconnect
 
 # Inclusive block ranges to backfill — the identified ingestion gaps (see README data note).
 GAP_RANGES: list[tuple[int, int]] = [
@@ -49,21 +54,36 @@ def main() -> None:
     tgt = get_client("primary")
     try:
         for lo, hi in GAP_RANGES:
-            print(f"Range {lo:,}–{hi:,} ({(hi - lo) // CHUNK_BLOCKS + 1} chunks)")
+            print(f"Range {lo:,}–{hi:,} ({(hi - lo) // CHUNK_BLOCKS + 1} chunks)", flush=True)
             block = lo
             while block <= hi:
                 chunk_hi = min(block + CHUNK_BLOCKS - 1, hi)
-                before = coverage(tgt, block, chunk_hi)
-                if before >= COMPLETE_THRESHOLD:
-                    print(f"  {block:,}–{chunk_hi:,}: already {before:.0%}, skip")
-                else:
-                    rows = backfill_chunk(src, tgt, block, chunk_hi)
-                    print(f"  {block:,}–{chunk_hi:,}: inserted {rows:,} rows (was {before:.0%})")
+                for attempt in range(1, MAX_ATTEMPTS + 1):
+                    try:
+                        before = coverage(tgt, block, chunk_hi)
+                        if before >= COMPLETE_THRESHOLD:
+                            print(f"  {block:,}–{chunk_hi:,}: already {before:.0%}, skip", flush=True)
+                        else:
+                            rows = backfill_chunk(src, tgt, block, chunk_hi)
+                            print(f"  {block:,}–{chunk_hi:,}: inserted {rows:,} rows "
+                                  f"(was {before:.0%})", flush=True)
+                        break
+                    except OperationalError as exc:
+                        if attempt == MAX_ATTEMPTS:
+                            raise
+                        delay = 10 * attempt
+                        print(f"  {block:,}–{chunk_hi:,}: attempt {attempt} failed "
+                              f"({type(exc).__name__}); reconnecting, retry in {delay}s", flush=True)
+                        src.close()
+                        tgt.close()
+                        time.sleep(delay)
+                        src = get_client("ethpandaops")
+                        tgt = get_client("primary")
                 block = chunk_hi + 1
     finally:
         src.close()
         tgt.close()
-    print("Done.")
+    print("Done.", flush=True)
 
 
 if __name__ == "__main__":
