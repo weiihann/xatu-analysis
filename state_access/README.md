@@ -35,10 +35,13 @@ uv run python -m state_access.analysis_history   # 3 trend charts
 
 Outputs: `data/history_w30.parquet` and `history_{state_cold,writes_cold,gas_concentration}.png`.
 
-**Data-quality note:** the personal node has a storage-diff ingestion gap (~Sep–Oct 2025,
-blocks ~23.39M–23.64M, ~35 days). Anchors whose 30-day window overlaps it report implausibly
-few slots, so `analysis_history.py` drops anchors below 70% of the median storage-slot count
-(8 of 186) from the charts. Every anchor — including the dropped ones — remains in the parquet.
+**Data-quality note:** the personal node has a storage-diff ingestion gap — blocks
+~23,270,400 → 23,659,200 (~54 days, ~late-Aug to mid-Oct 2025) are only ~0.5–1% present
+(normal through block 23,263,200; recovered by 23,666,400). A smaller dip sits at
+~23,097,600–23,112,000 (~4% present). Anchors whose 30-day window overlaps the main gap
+report implausibly few slots, so `analysis_history.py` drops anchors below 70% of the median
+storage-slot count (8 of 186) from the charts. Every anchor — including the dropped ones —
+remains in the parquet. Backfill priority: blocks 23,263,200 → 23,666,400.
 
 ## How it differs from the original
 
