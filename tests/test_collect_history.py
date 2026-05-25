@@ -16,10 +16,11 @@ def test_build_row_derives_cold_and_concentration():
     state = {"unique_accounts": 10, "unique_storage_slots": 20}
     totals = {"accounts": 1000, "storages": 2000}
     # acct_pct/stor_pct/updt_pct are warm percentages of today's writes.
-    row = ch.build_row(anchor=15_537_394, state=state,
+    row = ch.build_row(anchor=15_537_394, w=90, state=state,
                        acct_pct=90.0, stor_pct=70.0, updt_pct=80.0, totals=totals)
 
     assert row["anchor_block"] == 15_537_394
+    assert row["window_days"] == 90
     assert row["pct_accounts_cold"] == 99.0   # 100 - 100*10/1000
     assert row["pct_storage_cold"] == 99.0    # 100 - 100*20/2000
     assert row["acct_writes_cold_pct"] == 10.0
