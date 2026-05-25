@@ -19,8 +19,22 @@ ACCOUNT_COLOR = "#1565C0"
 STORAGE_COLOR = "#B71C1C"
 GAS_COLOR = "#2E7D32"
 
-df = pd.read_parquet(HISTORY_PARQUET).sort_values("anchor_block")
-print(f"{len(df)} anchors, {df['date'].min():%Y-%m-%d} → {df['date'].max():%Y-%m-%d}")
+raw = pd.read_parquet(HISTORY_PARQUET).sort_values("anchor_block")
+
+# Data-quality filter. The personal node has a storage-diff ingestion gap (~Sep–Oct 2025,
+# blocks ~23.39M–23.64M). Anchors whose 30-day window overlaps it report implausibly few
+# slots — on post-Merge mainnet a 30-day window always touches tens of millions. Drop anchors
+# below 70% of the series median from the charts; the parquet still holds every row.
+median_slots = raw["unique_storage_slots"].median()
+complete = raw["unique_storage_slots"] >= 0.7 * median_slots
+df = raw[complete]
+excluded = raw[~complete]
+
+print(f"{len(df)} anchors plotted, {df['date'].min():%Y-%m-%d} → {df['date'].max():%Y-%m-%d}")
+if not excluded.empty:
+    blocks = ", ".join(f"{b:,}" for b in excluded["anchor_block"])
+    print(f"Excluded {len(excluded)} anchors with incomplete diff data "
+          f"(< 70% of median storage slots): {blocks}")
 
 
 def show(fig: go.Figure) -> None:
@@ -32,11 +46,16 @@ def show(fig: go.Figure) -> None:
 
 
 def add_forks(fig: go.Figure) -> None:
-    """Annotate fork boundaries that fall within the swept range."""
+    """Annotate fork boundaries that fall within the swept range.
+
+    plotly's add_vline mishandles datetime x values, so pass the date as a string.
+    """
     for name, block in FORKS.items():
         if df["anchor_block"].min() <= block <= df["anchor_block"].max():
-            fig.add_vline(x=block_to_date(block), line=dict(color="gray", width=1, dash="dash"),
-                          annotation_text=name, annotation_position="top")
+            day = block_to_date(block).strftime("%Y-%m-%d")
+            fig.add_vline(x=day, line=dict(color="gray", width=1, dash="dash"))
+            fig.add_annotation(x=day, y=1.0, yref="paper", yanchor="bottom",
+                               text=name, showarrow=False, font=dict(size=10, color="gray"))
 
 
 # %%
