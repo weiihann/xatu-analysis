@@ -1,21 +1,23 @@
-"""Configuration for the post-Merge historical sweep of state_access at W=30.
+"""Configuration for the post-Merge historical sweep of state_access.
 
-Anchors step weekly (7 * 7,200 blocks) over the post-Merge range, generated
-descending from END_BLOCK so the final anchor coincides with the static run.
+Anchors step weekly (7 * 7,200 blocks) over the post-Merge range, generated descending
+from END_BLOCK so the final anchor coincides with the static run. Each window W has its
+own anchor floor so the whole lookback stays post-Merge (where 7,200 blocks == 1 day),
+and its own output parquet, so sweeps at different W never overwrite each other.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from state_access.config import DATA_DIR
 
-START_BLOCK = 15_537_394  # The Merge (first PoS block)
 END_BLOCK = 24_870_000    # matches the static analysis anchor
 STEP = 50_400             # 7 days * 7,200 blocks/day (weekly)
-W = 30                    # fixed active-window, in days
+DEFAULT_W = 30            # default active-window, in days
 
-MERGE_BLOCK = 15_537_394
+MERGE_BLOCK = 15_537_394  # The Merge (first PoS block); 7,200 blocks/day holds from here on
 MERGE_TS = 1_663_224_179  # 2022-09-15 06:42:59 UTC, block 15,537,394
 SECONDS_PER_BLOCK = 12
 
@@ -26,17 +28,30 @@ FORKS = {
     "Pectra": 22_431_084,
 }
 
-HISTORY_PARQUET = DATA_DIR / "history_w30.parquet"
+
+def start_block(w: int) -> int:
+    """Lowest anchor whose W-day lookback window stays entirely post-Merge.
+
+    An anchor's window reaches back (W + 1) days (the 1-day "today" window plus the
+    W-day warm set), so the earliest valid anchor is that far above the Merge block.
+    """
+    return MERGE_BLOCK + (w + 1) * 7_200
 
 
-def anchors() -> list[int]:
-    """Anchor blocks, weekly across the post-Merge range, ascending; last == END_BLOCK."""
+def anchors(w: int = DEFAULT_W) -> list[int]:
+    """Weekly anchor blocks for window `w`, ascending; last == END_BLOCK."""
+    floor = start_block(w)
     out: list[int] = []
     block = END_BLOCK
-    while block >= START_BLOCK:
+    while block >= floor:
         out.append(block)
         block -= STEP
     return sorted(out)
+
+
+def parquet_for(w: int = DEFAULT_W) -> Path:
+    """Output parquet path for a window's sweep (e.g. data/history_w90.parquet)."""
+    return DATA_DIR / f"history_w{w}.parquet"
 
 
 def block_to_date(block: int) -> datetime:

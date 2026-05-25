@@ -1,36 +1,38 @@
-"""Render the historical-sweep trend charts from history_w30.parquet.
+"""Render the historical-sweep trend charts for a window W from history_w{W}.parquet.
 
-Run `state_access/collect_history.py` first. Organised as `# %%` cells; also runs
-top-to-bottom as a script, saving PNGs next to the parquet.
+Run `collect_history.py` first. Organised as `# %%` cells; also runs top-to-bottom as a
+script, saving PNGs next to the parquet.
 
-    uv run python -m state_access.analysis_history
+    uv run python -m state_access.analysis_history [W]   # default W=30
 """
 
 # %%
 from __future__ import annotations
 
+import sys
+
 import pandas as pd
 import plotly.graph_objs as go
 
 from state_access.config import DATA_DIR
-from state_access.history_config import FORKS, HISTORY_PARQUET, W, block_to_date
+from state_access.history_config import DEFAULT_W, FORKS, block_to_date, parquet_for
+
+W = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_W
 
 ACCOUNT_COLOR = "#1565C0"
 STORAGE_COLOR = "#B71C1C"
 GAS_COLOR = "#2E7D32"
 
-raw = pd.read_parquet(HISTORY_PARQUET).sort_values("anchor_block")
+raw = pd.read_parquet(parquet_for(W)).sort_values("anchor_block")
 
-# Data-quality filter. The personal node has a storage-diff ingestion gap (~Sep–Oct 2025,
-# blocks ~23.39M–23.64M). Anchors whose 30-day window overlaps it report implausibly few
-# slots — on post-Merge mainnet a 30-day window always touches tens of millions. Drop anchors
-# below 70% of the series median from the charts; the parquet still holds every row.
+# Data-quality filter: drop anchors whose window overlapped an ingestion gap (implausibly
+# few slots). On a fully-backfilled node this excludes nothing; it stays as a safety net.
 median_slots = raw["unique_storage_slots"].median()
 complete = raw["unique_storage_slots"] >= 0.7 * median_slots
 df = raw[complete]
 excluded = raw[~complete]
 
-print(f"{len(df)} anchors plotted, {df['date'].min():%Y-%m-%d} → {df['date'].max():%Y-%m-%d}")
+print(f"W={W}d: {len(df)} anchors plotted, {df['date'].min():%Y-%m-%d} → {df['date'].max():%Y-%m-%d}")
 if not excluded.empty:
     blocks = ", ".join(f"{b:,}" for b in excluded["anchor_block"])
     print(f"Excluded {len(excluded)} anchors with incomplete diff data "
@@ -58,6 +60,11 @@ def add_forks(fig: go.Figure) -> None:
                                text=name, showarrow=False, font=dict(size=10, color="gray"))
 
 
+def save(fig: go.Figure, name: str) -> None:
+    fig.write_image(DATA_DIR / f"history_w{W}_{name}.png", scale=2)
+    show(fig)
+
+
 # %%
 # Chart 1 — hot/cold state share over time.
 fig1 = go.Figure()
@@ -73,8 +80,7 @@ fig1.update_layout(
     template="plotly_white", width=1300, height=550,
     legend=dict(x=0.01, y=0.02, bgcolor="rgba(255,255,255,0.85)"),
 )
-fig1.write_image(DATA_DIR / "history_state_cold.png", scale=2)
-show(fig1)
+save(fig1, "state_cold")
 
 # %%
 # Chart 2 — writes-to-cold over time.
@@ -91,8 +97,7 @@ fig2.update_layout(
     template="plotly_white", width=1300, height=550,
     legend=dict(x=0.01, y=0.98, bgcolor="rgba(255,255,255,0.85)"),
 )
-fig2.write_image(DATA_DIR / "history_writes_cold.png", scale=2)
-show(fig2)
+save(fig2, "writes_cold")
 
 # %%
 # Chart 3 — update-gas warm share + concentration over time (dual axis).
@@ -109,7 +114,6 @@ fig3.update_layout(
     yaxis=dict(title="update-gas warm %", ticksuffix="%", gridcolor="lightgray"),
     yaxis2=dict(title="concentration (×)", overlaying="y", side="right", showgrid=False),
     template="plotly_white", width=1300, height=550,
-    legend=dict(x=0.01, y=0.02, bgcolor="rgba(255,255,255,0.85)"),
+    legend=dict(x=0.01, y=0.02, bgcolor="rgba(255,255,255,0.95)"),
 )
-fig3.write_image(DATA_DIR / "history_gas_concentration.png", scale=2)
-show(fig3)
+save(fig3, "gas_concentration")
