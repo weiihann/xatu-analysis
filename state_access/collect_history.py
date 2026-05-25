@@ -12,13 +12,18 @@ e.g.        uv run python -m state_access.collect_history 90 180 365
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Mapping
 
 import pandas as pd
+from clickhouse_connect.driver.exceptions import OperationalError
 
 from lib.clickhouse import run_query
 from state_access import queries
 from state_access.history_config import DEFAULT_W, anchors, block_to_date, parquet_for
+
+MAX_ATTEMPTS = 6          # ride out transient node/Tailscale blips over a long run
+RETRY_BASE_DELAY = 20     # seconds, multiplied by attempt number
 
 
 def remaining_anchors(all_anchors: list[int], existing: pd.DataFrame | None) -> list[int]:
@@ -77,6 +82,21 @@ def _fetch_anchor(anchor: int, w: int) -> dict[str, object]:
     return build_row(anchor, w, state, acct_pct, stor_pct, updt_pct, totals)
 
 
+def _fetch_with_retry(anchor: int, w: int) -> dict[str, object]:
+    """Fetch one anchor, retrying transient connection errors with backoff."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return _fetch_anchor(anchor, w)
+        except OperationalError as exc:
+            if attempt == MAX_ATTEMPTS:
+                raise
+            delay = RETRY_BASE_DELAY * attempt
+            print(f"  block {anchor:,}: attempt {attempt} failed ({type(exc).__name__}); "
+                  f"retry in {delay}s", flush=True)
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # loop either returns or raises
+
+
 def collect(w: int) -> None:
     """Run (or resume) the sweep for a single window W."""
     parquet = parquet_for(w)
@@ -88,7 +108,7 @@ def collect(w: int) -> None:
           f"({len(rows)} already done), writing {parquet}", flush=True)
 
     for i, anchor in enumerate(todo, 1):
-        row = _fetch_anchor(anchor, w)
+        row = _fetch_with_retry(anchor, w)
         rows.append(row)
         pd.DataFrame(rows).sort_values("anchor_block").to_parquet(parquet, index=False)
         print(f"  [{i}/{len(todo)}] block {anchor:,} {row['date']:%Y-%m-%d}: "
