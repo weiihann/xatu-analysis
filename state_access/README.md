@@ -21,6 +21,20 @@ uv run python -m state_access.collect     # queries ClickHouse → data/*.parque
 uv run python -m state_access.analysis     # data/ → 4 PNG charts + printed tables
 ```
 
+## Historical sweep
+
+`collect_history.py` / `analysis_history.py` extend the static analysis into a post-Merge
+weekly time series at fixed W=30 (block 15.54M → 24.87M, ~186 anchors), to test whether the
+findings are stable over time. It reuses the same query builders, one anchor at a time,
+checkpointing `data/history_w30.parquet` after each anchor (resumable).
+
+```bash
+uv run python -m state_access.collect_history   # ~1–1.5 hr, resumable
+uv run python -m state_access.analysis_history   # 3 trend charts
+```
+
+Outputs: `data/history_w30.parquet` and `history_{state_cold,writes_cold,gas_concentration}.png`.
+
 ## How it differs from the original
 
 - **`uniq` (HyperLogLog, ~1% error) for every window.** The personal node has no Cloudflare
