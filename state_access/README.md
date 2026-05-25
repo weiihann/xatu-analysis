@@ -35,6 +35,11 @@ uv run python -m state_access.analysis_history   # 3 trend charts
 
 Outputs: `data/history_w30.parquet` and `history_{state_cold,writes_cold,gas_concentration}.png`.
 
+**Data-quality note:** the personal node has a storage-diff ingestion gap (~Sep–Oct 2025,
+blocks ~23.39M–23.64M, ~35 days). Anchors whose 30-day window overlaps it report implausibly
+few slots, so `analysis_history.py` drops anchors below 70% of the median storage-slot count
+(8 of 186) from the charts. Every anchor — including the dropped ones — remains in the parquet.
+
 ## How it differs from the original
 
 - **`uniq` (HyperLogLog, ~1% error) for every window.** The personal node has no Cloudflare
