@@ -169,17 +169,28 @@ of heavy-hitting slots established itself. It is stable thereafter at every wind
 | 180d | — | 5× | 7× | 7× | 6× |
 | 365d | — | 3× | 3× | 4× | 4× |
 
+**Update-gas coverage and concentration** (dual-axis: warm-gas % and the Y/X ratio):
+
 ![Concentration over time, W=30](data/history_w30_gas_concentration.png)
 ![Concentration over time, W=90](data/history_w90_gas_concentration.png)
 ![Concentration over time, W=180](data/history_w180_gas_concentration.png)
 ![Concentration over time, W=365](data/history_w365_gas_concentration.png)
 
-Cold-state share over time is likewise flat within each window:
+**Cold-state share** — flat within each window; the level steps down as `W` widens (more state is
+touched over a longer lookback):
 
 ![Cold state over time, W=30](data/history_w30_state_cold.png)
+![Cold state over time, W=90](data/history_w90_state_cold.png)
+![Cold state over time, W=180](data/history_w180_state_cold.png)
+![Cold state over time, W=365](data/history_w365_state_cold.png)
 
-The remaining per-window charts (`history_w{30,90,180,365}_{state_cold,writes_cold}.png`) are in
-`data/`.
+**Writes hitting the cold tier** — the share of today's account and storage writes that land cold,
+also stable over time and falling as `W` widens:
+
+![Writes to cold over time, W=30](data/history_w30_writes_cold.png)
+![Writes to cold over time, W=90](data/history_w90_writes_cold.png)
+![Writes to cold over time, W=180](data/history_w180_writes_cold.png)
+![Writes to cold over time, W=365](data/history_w365_writes_cold.png)
 
 ## 6. Data-quality note
 
@@ -201,38 +212,68 @@ region returned to ~99.9% coverage. Two downstream corrections followed:
 
 All figures in this report are post-backfill.
 
-## 7. Caveats
+## 7. Appendix
 
-- **`uniq` is approximate** (~1% standard error). Cardinalities are not exact.
-- **No `FINAL`** on the diff tables, matching the original; raw write counts carry a minor
-  ReplacingMergeTree duplicate risk.
-- **Writes, not reads.** This measures modifications only. A disk-cache-oriented analysis would
-  need a parallel pass over the read tables, where the hot working set is likely larger.
-- **Nominal SSTORE gas.** Update gas uses the near-constant SSTORE_RESET cost, so count-% equals
-  gas-% for updates; it is not traced per-call actual gas.
-- **Deterministic block→date.** Dates derive from the 12s post-Merge cadence; missed slots add
-  small drift, immaterial on a multi-year axis.
-- **`W = 365d` floor** trims the earliest anchors so the year-long lookback stays post-Merge; that
-  series starts later (2023-09).
-- **Totals** are read from the `execution_state_size` snapshot at the anchor block.
+### Queries (`state_access/queries.py`)
 
-## 8. Appendix
+Five builders, parameterised by anchor block `bn_now` and window `W` days; `7200` blocks = 1 day
+(post-Merge). Mainnet only.
 
-### Query shapes (`state_access/queries.py`)
+**1. `state_touched`** — unique accounts (3-way diff union) and unique storage slots in the window:
 
-Five builders, parameterised by anchor block and window `W`:
+```sql
+WITH {bn_now} AS bn_now, {bn_now - W*7200} AS bn_lo
+SELECT
+    (
+        SELECT uniq(address) FROM (
+            SELECT address FROM canonical_execution_balance_diffs
+              WHERE meta_network_name='mainnet' AND block_number BETWEEN bn_lo AND bn_now
+            UNION ALL
+            SELECT address FROM canonical_execution_nonce_diffs
+              WHERE meta_network_name='mainnet' AND block_number BETWEEN bn_lo AND bn_now
+            UNION ALL
+            SELECT address FROM canonical_execution_storage_diffs
+              WHERE meta_network_name='mainnet' AND block_number BETWEEN bn_lo AND bn_now
+        )
+    ) AS unique_accounts,
+    (
+        SELECT uniq((address, slot)) FROM canonical_execution_storage_diffs
+          WHERE meta_network_name='mainnet' AND block_number BETWEEN bn_lo AND bn_now
+    ) AS unique_storage_slots
+```
 
-1. `state_touched` — `uniq(address)` over the 3-way UNION of balance/nonce/storage diffs, and
-   `uniq((address, slot))` over storage diffs, for `block_number BETWEEN bn_now − W·7200 AND bn_now`.
-2. `account_writes_warm` — of today's balance writes (`[bn_now − 7200, bn_now]`),
-   `countIf(cityHash64(address) GLOBAL IN <addresses in the prior W days>)`.
-3. `storage_writes_warm` — same shape, keyed on `cityHash64(address, slot)` over storage diffs.
-4. `update_writes_warm` — as (3) but today's writes are filtered to `from_value != 0` (updates
-   only); feeds `pct_update_gas_warm`.
-5. `totals` — latest `execution_state_size` snapshot with `block_number <= bn_now` (ethPandaOps).
+**2–4. writes-to-warm** — of *today's* writes (`[bn_now − 7200, bn_now]`), how many hit a key seen
+in the prior `W` days. The prior-window set is never filtered: a slot is warm if it was touched at
+all, created or updated. Shown for storage; `account_writes_warm` uses
+`canonical_execution_balance_diffs` keyed on `cityHash64(address)`, and `update_writes_warm` adds
+the `from_value` filter (commented below) to count updates only:
 
-The warm-set membership tests never filter the prior-window set — a slot is warm if it was touched
-at all in the window, whether created or updated.
+```sql
+WITH {bn_now} AS bn_now, {bn_now - 7200} AS bn_today_start
+SELECT
+    count() AS today,
+    countIf(cityHash64(address, slot) GLOBAL IN (
+        SELECT cityHash64(address, slot)
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name='mainnet'
+          AND block_number BETWEEN {bn_today_start - W*7200} AND bn_today_start - 1
+    )) AS warm,
+    round(100 * warm / today, 4) AS pct_warm
+FROM canonical_execution_storage_diffs
+WHERE meta_network_name='mainnet'
+  AND block_number BETWEEN bn_today_start AND bn_now
+  -- update_writes_warm only: AND from_value != '0x0000…0000'  (32-byte zero; excludes creations)
+```
+
+**5. `totals`** — latest live-state snapshot at or before the anchor (ethPandaOps cluster):
+
+```sql
+SELECT block_number AS snapshot_block, accounts, storages
+FROM execution_state_size
+WHERE meta_network_name='mainnet' AND block_number <= {bn_now}
+ORDER BY block_number DESC
+LIMIT 1
+```
 
 ### Data files (`state_access/data/`)
 
