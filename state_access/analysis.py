@@ -11,6 +11,7 @@ a script, saving PNGs next to the parquets.
 from __future__ import annotations
 
 import json
+import math
 
 import pandas as pd
 import plotly.graph_objs as go
@@ -124,14 +125,14 @@ fig3.add_trace(go.Scatter(
     line=dict(color=STORAGE_COLOR, width=2.5), marker=dict(size=9, symbol="square"),
     text=[f"{v:.1f}%" for v in stor["storage_writes_cold_pct"]], textposition="top center",
 ))
+# On a log x-axis, add_vrect takes raw data values, but layout range (below) is in log10.
 fig3.add_vrect(x0=14, x1=60, fillcolor="rgba(255,200,0,0.18)", line_width=0, layer="below",
                annotation_text="sweet spot", annotation_position="top right")
-fig3.add_vline(x=180, line=dict(color="gray", width=1.5, dash="dash"),
-               annotation_text="EIP-8188 target ≈ 180d", annotation_position="bottom left")
 fig3.update_layout(
     title="State tiering tradeoff: cold-bucket size vs writes-to-cold"
           f"<br><sub>mainnet, block {totals['snapshot_block']:,}</sub>",
     xaxis=dict(title="W = active-window length (days, log)", type="log",
+               range=[math.log10(0.9), math.log10(100)],
                tickvals=tradeoff["window_days"].tolist(), gridcolor="lightgray"),
     yaxis=dict(title="% of state (blue) / % of write events (green/red)",
                range=[0, 105], ticksuffix="%", gridcolor="lightgray"),
