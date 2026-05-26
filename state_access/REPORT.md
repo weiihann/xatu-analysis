@@ -106,6 +106,12 @@ later step moves it by ~1 point or less.
 | 14d | 98.57% | 11.21% | 30.43% |
 | 30d | 97.04% | 10.20% | 28.86% |
 | 60d | 94.19% | 9.58% | 27.93% |
+| 90d | 91.97% | 9.19% | 27.45% |
+| 180d | 84.38% | 8.79% | 26.39% |
+| 365d | 74.50% | 8.45% | 25.47% |
+
+(The 90d/180d/365d rows are the same anchor block evaluated at those windows — the final point of
+each historical sweep.)
 
 ![Tiering tradeoff](data/tradeoff_cold_vs_writes.png)
 
