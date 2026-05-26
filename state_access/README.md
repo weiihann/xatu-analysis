@@ -4,6 +4,8 @@ Replication of Toni Wahrstätter's `state_access.ipynb`: how much of Ethereum st
 "hot" (modified within the last N days) vs "cold", and how that maps onto EIP-8188-style
 state tiering (Active/Inactive pricing).
 
+**See [REPORT.md](REPORT.md)** for the written findings (static snapshot + historical sweep).
+
 Anchored at block **24,870,000** (mainnet). Three questions:
 
 1. **Hot vs cold state** — what share of accounts/storage slots was modified within a
