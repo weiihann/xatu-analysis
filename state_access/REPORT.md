@@ -197,6 +197,32 @@ touched over a longer lookback):
 ![Cold state over time, W=180](data/history_w180_state_cold.png)
 ![Cold state over time, W=365](data/history_w365_state_cold.png)
 
+### Is the anchor a quiet-market artifact?
+
+A fair worry: the static snapshot is one block, and if it fell in a low-activity stretch its cold
+shares would be inflated. The consolidated view rules this out — every window's combined cold share
+(accounts and storage slots pooled into one population) on one timeline, with the static anchor as
+the final point of each line.
+
+![Cold share across windows over time](data/history_windows_cold.png)
+
+Two things stand out. The window ordering (W=30 highest, W=365 lowest) holds at every point in
+history — the relationship is structural, not a property of the anchor. And the anchor is not a
+quiet outlier: its cold share sits *below* each window's long-run mean, in the lower third of the
+historical distribution.
+
+| window | min | mean | max | anchor | anchor percentile |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 30d | 94.72% | 97.04% | 98.03% | 96.82% | 31st |
+| 90d | 87.19% | 92.38% | 94.24% | 91.27% | 25th |
+| 180d | 79.06% | 86.42% | 89.03% | 83.74% | 13th |
+| 365d | 67.95% | 76.09% | 78.48% | 74.26% | 17th |
+
+If anything the anchor is a slightly busier-than-average moment (the longer windows peaked in early
+2025 and have eased since), so the static cold shares understate the long-run average rather than
+overstating it. The 30-day window is the most stable of all — within a ~3.3-point band (94.7–98.0%)
+across three and a half years.
+
 **Writes hitting the cold tier** — the share of today's account and storage writes that land cold,
 also stable over time and falling as `W` widens:
 
@@ -273,3 +299,4 @@ LIMIT 1
 - Static: `hot_cold_state.parquet`, `tradeoff.parquet`, `gas_concentration.parquet`, `totals.json`,
   and the four `*_vs_window.png` / `*.png` charts.
 - Historical: `history_w{30,90,180,365}.parquet` and `history_w{30,90,180,365}_{state_cold,writes_cold,gas_concentration}.png`.
+- Consolidated: `history_windows_cold.png` (cold share, all windows on one timeline; from `analysis_windows.py`).
