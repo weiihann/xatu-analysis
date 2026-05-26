@@ -192,27 +192,7 @@ also stable over time and falling as `W` widens:
 ![Writes to cold over time, W=180](data/history_w180_writes_cold.png)
 ![Writes to cold over time, W=365](data/history_w365_writes_cold.png)
 
-## 6. Data-quality note
-
-The self-hosted node had a storage-diff ingestion gap: blocks ~23.27M–23.66M (~54 days, Sep–Oct
-2025) were only ~0.5–1% present, plus a smaller dip around 23.10M. The gap first surfaced as
-physically impossible results in the sweep — storage 100% cold and concentration up to ~30,000× —
-which traced back to near-empty 30-day windows over the affected anchors.
-
-The gap was confirmed by per-block coverage on the raw table, then backfilled from the ethPandaOps
-cluster (which had ~99.9% coverage of the range) via `scripts/backfill_storage_diffs.py` — a
-chunked, resumable copy that is idempotent against the ReplacingMergeTree table. After backfill the
-region returned to ~99.9% coverage. Two downstream corrections followed:
-
-- The static `W = 180d` window reaches back into the gap; its storage-slot count corrected from
-  227.7M to **242.5M** (cold 85.3% → 84.4%). Windows ≤128d don't reach the gap and were unaffected.
-- The sweep's gap-affected anchors were re-collected. With the gap filled, the per-window
-  completeness filter (drop anchors below 70% of the median storage-slot count) excludes none, and
-  all four series are unbroken.
-
-All figures in this report are post-backfill.
-
-## 7. Appendix
+## 6. Appendix
 
 ### Queries (`state_access/queries.py`)
 
