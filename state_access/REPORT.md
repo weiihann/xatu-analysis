@@ -120,11 +120,18 @@ A tiny warm slice captures most update gas, and the concentration is extreme at 
 | 14d | 1.44% | 83.11% | 58× |
 | **30d** | **2.96%** | **84.79%** | **29×** |
 | 60d | 5.81% | 85.74% | 15× |
+| 90d | 8.03% | 86.24% | 11× |
+| 180d | 15.62% | 87.45% | 6× |
+| 365d | 25.50% | 88.52% | 3× |
 
-Doubling the window from 30d to 60d doubles the warm-state cost (2.96% → 5.81% of slots) and halves
-the concentration (29× → 15×) to gain under one point of update-gas coverage. That is the
-diminishing-returns elbow: the heavy-hitting slots (stablecoin balances, DEX reserves, busy router
-storage) are already warm at 30 days, and a wider window only sweeps in low-traffic slots.
+(The 90d/180d/365d rows are the same anchor block evaluated at those windows — the final point of
+each historical sweep.)
+
+The pattern is unmistakable across the full range. From 30d to 365d the warm-state cost grows ~8×
+(2.96% → 25.50% of slots) while update-gas coverage rises under 4 points (84.79% → 88.52%) and
+concentration collapses from 29× to 3×. That is the diminishing-returns elbow: the heavy-hitting
+slots (stablecoin balances, DEX reserves, busy router storage) are already warm at 30 days, and a
+wider window only sweeps in low-traffic slots.
 
 ![Gas concentration](data/gas_concentration.png)
 
