@@ -44,3 +44,6 @@ short-lived client, applies a generous `max_execution_time`, and returns a DataF
 
 - [`state_access/`](state_access/) — hot vs cold Ethereum state and the EIP-8188
   state-tiering / gas-concentration view.
+- [`state_delta/`](state_delta/) — net post-Merge growth of Ethereum live-state size.
+- [`bal_size/`](bal_size/) — how big EIP-7928 block-level access lists would be, per block,
+  over the trailing 6 months.
