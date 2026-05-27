@@ -32,10 +32,15 @@ checkpointing `data/history_w30.parquet` after each anchor (resumable).
 
 ```bash
 uv run python -m state_access.collect_history   # ~1–1.5 hr, resumable
-uv run python -m state_access.analysis_history   # 3 trend charts
+uv run python -m state_access.analysis_history   # 4 trend charts
 ```
 
-Outputs: `data/history_w30.parquet` and `history_{state_cold,writes_cold,gas_concentration}.png`.
+Outputs: `data/history_w30.parquet` and
+`history_w30_{state_cold,writes_cold,gas_concentration,workingset_size}.png`.
+
+The **working-set-size** chart sizes the 30-day unique-write set as keys only — a 20-byte
+address per account, a 52-byte (address, slot) key per storage slot (values excluded) — to
+show the byte size of recently-written state over time (~1.3–3 GB, storage keys ~88% of it).
 
 **Data-quality note:** the personal node originally had a storage-diff ingestion gap
 (blocks ~23,270,400 → 23,659,200, ~54 days, late-Aug–mid-Oct 2025, plus a small dip at

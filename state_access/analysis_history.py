@@ -14,7 +14,12 @@ import sys
 import pandas as pd
 import plotly.graph_objs as go
 
-from state_access.config import DATA_DIR
+from state_access.config import (
+    ACCOUNT_KEY_BYTES,
+    DATA_DIR,
+    STORAGE_KEY_BYTES,
+    working_set_bytes,
+)
 from state_access.history_config import DEFAULT_W, FORKS, block_to_date, parquet_for
 
 W = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_W
@@ -22,6 +27,7 @@ W = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_W
 ACCOUNT_COLOR = "#1565C0"
 STORAGE_COLOR = "#B71C1C"
 GAS_COLOR = "#2E7D32"
+GB = 1e9
 
 raw = pd.read_parquet(parquet_for(W)).sort_values("anchor_block")
 
@@ -117,3 +123,30 @@ fig3.update_layout(
     legend=dict(x=0.01, y=0.02, bgcolor="rgba(255,255,255,0.95)"),
 )
 save(fig3, "gas_concentration")
+
+# %%
+# Chart 4 — write working-set size over time (keys only): the byte size of the unique set
+# of accounts and storage slots written in the window, sized as 20-byte addresses and
+# 52-byte (address, slot) keys. Stacked so the split (slots dominate) and total are visible.
+acct_gb = ACCOUNT_KEY_BYTES * df["unique_accounts"] / GB
+slot_gb = STORAGE_KEY_BYTES * df["unique_storage_slots"] / GB
+fig4 = go.Figure()
+fig4.add_trace(go.Scatter(x=df["date"], y=acct_gb, mode="lines", name="account keys (20 B)",
+                          stackgroup="size", line=dict(color=ACCOUNT_COLOR, width=0.5)))
+fig4.add_trace(go.Scatter(x=df["date"], y=slot_gb, mode="lines", name="storage keys (52 B)",
+                          stackgroup="size", line=dict(color=STORAGE_COLOR, width=0.5)))
+add_forks(fig4)
+fig4.update_layout(
+    title=f"Write working-set size over time (W={W}d, keys only) — total = top of stack",
+    xaxis=dict(title="date", gridcolor="lightgray"),
+    yaxis=dict(title="size (GB)", gridcolor="lightgray"),
+    template="plotly_white", width=1300, height=550,
+    legend=dict(x=0.01, y=0.98, bgcolor="rgba(255,255,255,0.85)"),
+)
+save(fig4, "workingset_size")
+
+total_gb = working_set_bytes(df["unique_accounts"], df["unique_storage_slots"]) / GB
+print(f"Working-set size (W={W}d): latest {total_gb.iloc[-1]:.2f} GB "
+      f"({df['date'].iloc[-1]:%Y-%m-%d}); range {total_gb.min():.2f}–{total_gb.max():.2f} GB, "
+      f"mean {total_gb.mean():.2f} GB; storage keys are "
+      f"{100 * slot_gb.iloc[-1] / total_gb.iloc[-1]:.0f}% of the latest total")
