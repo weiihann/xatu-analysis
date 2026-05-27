@@ -83,29 +83,28 @@ gd["date"] = pd.to_datetime(gd["block"].map(block_to_date)).dt.tz_localize(None)
 lo, hi = w30["date"].min().strftime("%Y-%m-%d"), w30["date"].max().strftime("%Y-%m-%d")
 
 Q1_WINDOWS = [30, 180, 365]
-fig1 = make_subplots(rows=len(Q1_WINDOWS), cols=1, shared_xaxes=True, vertical_spacing=0.07,
-                     subplot_titles=[f"W={w}d" for w in Q1_WINDOWS],
-                     specs=[[{"secondary_y": True}] for _ in Q1_WINDOWS])
-for i, w in enumerate(Q1_WINDOWS, start=1):
+fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+for w in Q1_WINDOWS:
     df = frames[w]
-    first = i == 1
     warm_state = (df["unique_storage_slots"] + df["unique_accounts"]) / 1e6
-    fig1.add_trace(go.Scatter(x=df["date"], y=warm_state,
-                              name="warm state", legendgroup="warm", showlegend=first,
-                              line=dict(color="#B71C1C", width=2)), row=i, col=1, secondary_y=False)
-    fig1.add_trace(go.Scatter(x=df["date"], y=df["win_gas"] / 1e12,
-                              name="gas used", legendgroup="gas", showlegend=first,
-                              line=dict(color="#1565C0", width=2)), row=i, col=1, secondary_y=True)
-    fig1.update_yaxes(title_text="warm state (M)", row=i, col=1, secondary_y=False, gridcolor="lightgray")
-    fig1.update_yaxes(title_text="gas (×10¹²)", row=i, col=1, secondary_y=True)
+    color = WINDOW_COLORS[w]
+    fig1.add_trace(go.Scatter(x=df["date"], y=warm_state, name=f"W={w}d warm",
+                              legendgroup=f"w{w}", line=dict(color=color, width=2.5)),
+                   secondary_y=False)
+    fig1.add_trace(go.Scatter(x=df["date"], y=df["win_gas"] / 1e12, name=f"W={w}d gas",
+                              legendgroup=f"w{w}", line=dict(color=color, width=1.5, dash="dot")),
+                   secondary_y=True)
 add_forks(fig1, lo, hi)
 fig1.update_layout(
     title="Warm state and the gas that produced it, by window"
-          "<br><sub>storage slots + accounts touched in the trailing W days vs gas used over the same window</sub>",
-    template="plotly_white", width=1300, height=850,
+          "<br><sub>solid = warm state (slots + accounts, left axis); dotted = gas used (right axis); "
+          "trailing W days</sub>",
+    template="plotly_white", width=1300, height=650,
     legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
 )
-fig1.update_xaxes(title="date", row=len(Q1_WINDOWS), col=1, gridcolor="lightgray")
+fig1.update_xaxes(title="date", gridcolor="lightgray")
+fig1.update_yaxes(title_text="warm state — slots + accounts (M)", secondary_y=False, gridcolor="lightgray")
+fig1.update_yaxes(title_text="gas used over window (×10¹²)", secondary_y=True)
 fig1.write_image(DATA_DIR / "gas_warm_set.png", scale=2)
 show(fig1)
 
