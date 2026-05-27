@@ -76,29 +76,35 @@ frames = {w: load_with_gas(w) for w in WINDOWS}
 
 
 # %%
-# Q1 — warm set vs the gas that produced it (W=30), dual axis.
+# Q1 — warm set vs the gas that produced it, per window (one self-scaled dual-axis panel each).
 w30 = frames[30]
 gd = gas.copy()
 gd["date"] = pd.to_datetime(gd["block"].map(block_to_date)).dt.tz_localize(None)
 lo, hi = w30["date"].min().strftime("%Y-%m-%d"), w30["date"].max().strftime("%Y-%m-%d")
 
-fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-fig1.add_trace(go.Scatter(x=w30["date"], y=w30["unique_storage_slots"] / 1e6,
-                          name="warm slots (30d)", line=dict(color="#B71C1C", width=2.5)),
-               secondary_y=False)
-fig1.add_trace(go.Scatter(x=w30["date"], y=w30["win_gas"] / 1e12,
-                          name="gas used (30d)", line=dict(color="#1565C0", width=2.5)),
-               secondary_y=True)
+Q1_WINDOWS = [30, 180, 365]
+fig1 = make_subplots(rows=len(Q1_WINDOWS), cols=1, shared_xaxes=True, vertical_spacing=0.07,
+                     subplot_titles=[f"W={w}d" for w in Q1_WINDOWS],
+                     specs=[[{"secondary_y": True}] for _ in Q1_WINDOWS])
+for i, w in enumerate(Q1_WINDOWS, start=1):
+    df = frames[w]
+    first = i == 1
+    fig1.add_trace(go.Scatter(x=df["date"], y=df["unique_storage_slots"] / 1e6,
+                              name="warm slots", legendgroup="warm", showlegend=first,
+                              line=dict(color="#B71C1C", width=2)), row=i, col=1, secondary_y=False)
+    fig1.add_trace(go.Scatter(x=df["date"], y=df["win_gas"] / 1e12,
+                              name="gas used", legendgroup="gas", showlegend=first,
+                              line=dict(color="#1565C0", width=2)), row=i, col=1, secondary_y=True)
+    fig1.update_yaxes(title_text="warm slots (M)", row=i, col=1, secondary_y=False, gridcolor="lightgray")
+    fig1.update_yaxes(title_text="gas (×10¹²)", row=i, col=1, secondary_y=True)
 add_forks(fig1, lo, hi)
 fig1.update_layout(
-    title="Warm set and the gas that produced it (W=30d)"
-          "<br><sub>storage slots touched in the trailing 30 days vs gas used over the same window</sub>",
-    template="plotly_white", width=1300, height=560,
-    legend=dict(x=0.01, y=0.98, bgcolor="rgba(255,255,255,0.85)"),
+    title="Warm set and the gas that produced it, by window"
+          "<br><sub>storage slots touched in the trailing W days vs gas used over the same window</sub>",
+    template="plotly_white", width=1300, height=850,
+    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
 )
-fig1.update_xaxes(title="date", gridcolor="lightgray")
-fig1.update_yaxes(title_text="warm storage slots (millions)", secondary_y=False, gridcolor="lightgray")
-fig1.update_yaxes(title_text="gas used over 30d (×10¹²)", secondary_y=True)
+fig1.update_xaxes(title="date", row=len(Q1_WINDOWS), col=1, gridcolor="lightgray")
 fig1.write_image(DATA_DIR / "gas_warm_set.png", scale=2)
 show(fig1)
 
