@@ -1,0 +1,4 @@
+# Transient per-pass checkpoints (regenerable; merged into bal_perblock.parquet).
+_local_perblock.parquet
+_epo_perblock.parquet
+*.done.json
