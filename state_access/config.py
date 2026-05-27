@@ -20,4 +20,15 @@ ACCOUNT_WRITE_WINDOWS = [1, 7, 14, 30, 60, 90]
 STORAGE_WRITE_WINDOWS = [1, 7, 14, 30, 60]
 UPDATE_WINDOWS = [1, 7, 14, 30, 60]
 
+# Key-only sizing for the write working-set view: an account is keyed by its 20-byte
+# address; a storage slot by its address plus the 32-byte slot key. Values are excluded.
+ACCOUNT_KEY_BYTES = 20
+STORAGE_KEY_BYTES = 20 + 32
+
+
+def working_set_bytes(unique_accounts: int, unique_storage_slots: int) -> int:
+    """Key-only byte size of a unique-write set: addresses + (address, slot) keys."""
+    return ACCOUNT_KEY_BYTES * unique_accounts + STORAGE_KEY_BYTES * unique_storage_slots
+
+
 DATA_DIR = Path(__file__).resolve().parent / "data"
