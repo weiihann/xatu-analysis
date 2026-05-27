@@ -243,9 +243,9 @@ capacity expansion is the lever behind the recent cold-state decline.
 Plotting the total warm state — storage slots plus accounts touched in the trailing W days —
 against the gas used over the same window, at W = 30, 180, and 365 days, the warm state rises as the
 gas limit unlocks more room, clearest in the 2025–2026 ramp where gas steps up at the limit hikes
-and the warm state climbs with it. Accounts add a roughly quarter-to-third band on top of slots.
-The longer windows are U-shaped: through the flat-30M-limit era (2023–2024) the warm state *shrank*
-as activity concentrated, then turned up once the limit started rising.
+and the warm state climbs with it. The longer windows are U-shaped: through the flat-30M-limit era
+(2023–2024) the warm state *shrank* as activity concentrated, then turned up once the limit started
+rising.
 
 ![Warm set vs gas](data/gas_warm_set.png)
 

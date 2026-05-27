@@ -89,15 +89,10 @@ fig1 = make_subplots(rows=len(Q1_WINDOWS), cols=1, shared_xaxes=True, vertical_s
 for i, w in enumerate(Q1_WINDOWS, start=1):
     df = frames[w]
     first = i == 1
-    stack = f"warm{i}"  # unique per row so the area doesn't stack across panels
-    fig1.add_trace(go.Scatter(x=df["date"], y=df["unique_storage_slots"] / 1e6,
-                              name="warm slots", legendgroup="slots", showlegend=first,
-                              stackgroup=stack, line=dict(width=0.5, color="#B71C1C"),
-                              fillcolor="rgba(183,28,28,0.55)"), row=i, col=1, secondary_y=False)
-    fig1.add_trace(go.Scatter(x=df["date"], y=df["unique_accounts"] / 1e6,
-                              name="warm accounts", legendgroup="accounts", showlegend=first,
-                              stackgroup=stack, line=dict(width=0.5, color="#EF6C00"),
-                              fillcolor="rgba(239,108,0,0.55)"), row=i, col=1, secondary_y=False)
+    warm_state = (df["unique_storage_slots"] + df["unique_accounts"]) / 1e6
+    fig1.add_trace(go.Scatter(x=df["date"], y=warm_state,
+                              name="warm state", legendgroup="warm", showlegend=first,
+                              line=dict(color="#B71C1C", width=2)), row=i, col=1, secondary_y=False)
     fig1.add_trace(go.Scatter(x=df["date"], y=df["win_gas"] / 1e12,
                               name="gas used", legendgroup="gas", showlegend=first,
                               line=dict(color="#1565C0", width=2)), row=i, col=1, secondary_y=True)
