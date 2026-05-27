@@ -231,7 +231,64 @@ also stable over time and falling as `W` widens:
 ![Writes to cold over time, W=180](data/history_w180_writes_cold.png)
 ![Writes to cold over time, W=365](data/history_w365_writes_cold.png)
 
-## 6. Appendix
+## 6. Gas: the capacity behind the warm set
+
+The warm set is just the volume of state-touching work, and that work is bounded by gas. Over
+the post-Merge period the block gas limit **doubled** — 30M through 2024, ~42M in 2025, 60M in
+2026 — while utilization stayed pinned near 50%, so gas *used* roughly doubled with it. That
+capacity expansion is the lever behind the recent cold-state decline.
+
+### The warm set tracks gas (Q1)
+
+Plotting the warm set (storage slots touched in the trailing 30 days) against the gas used over
+the same window, the warm set rises as the gas limit unlocks more room — clearest in the
+2025–2026 ramp, where gas steps up at the limit hikes and the warm set climbs with it.
+
+![Warm set vs gas](data/gas_warm_set.png)
+
+### But intensity per gas is falling (Q2)
+
+The warm set grows with gas, but **sub-proportionally**. Distinct storage slots touched per
+million gas has fallen steadily — roughly halving since 2023:
+
+| year | W=30 | W=90 | W=180 | W=365 |
+| ---: | ---: | ---: | ---: | ---: |
+| 2022 | 13.05 | 11.81 | — | — |
+| 2023 | 9.74 | 9.40 | 8.91 | 8.39 |
+| 2024 | 7.99 | 7.40 | 7.13 | 7.01 |
+| 2025 | 7.51 | 7.03 | 6.80 | 6.60 |
+| 2026 | 6.94 | 6.66 | 6.51 | 6.29 |
+
+![State-access intensity per gas](data/gas_intensity.png)
+
+Each unit of gas touches fewer *distinct* slots than it used to. Plausible causes: concentration
+(the heavy slots are already warm, so marginal gas re-hits them rather than reaching new ones),
+more gas going to compute and calldata, and Dencun's transient storage (EIP-1153), which spends
+gas without persisting state.
+
+### Implication for state tiering (Q3)
+
+Putting the gas-limit regime next to the warm set at fixed W=30:
+
+| year | gas limit | gas used/block | warm slots | slots per Mgas |
+| ---: | ---: | ---: | ---: | ---: |
+| 2022 | 30.0M | 15.2M | 42.9M | 13.05 |
+| 2023 | 30.0M | 15.1M | 31.8M | 9.74 |
+| 2024 | 30.0M | 15.1M | 26.1M | 7.99 |
+| 2025 | 41.6M | 21.1M | 33.0M | 7.51 |
+| 2026 | 60.0M | 30.3M | 45.6M | 6.94 |
+
+A gas-limit increase inflates the Active-tier (warm) set that a tiering scheme must keep cheap —
+the 2026 warm set is back near its 2022 level, but produced by twice the gas. Crucially the
+inflation is sub-linear: gas roughly doubled while the warm set grew less than that, because
+intensity fell. So the gas limit and the active-window `W` are coupled knobs — raising the limit
+raises the Active footprint at a fixed `W`, but each increment buys diminishing extra warm state.
+
+**Caveat:** gas used covers compute, calldata, and transient storage, not just permanent-state
+access, so "slots per gas" is an intensity *proxy*, not a clean causal ratio. The trend is robust
+across all four windows; the absolute level is not a unit conversion.
+
+## 7. Appendix
 
 ### Queries (`state_access/queries.py`)
 
@@ -300,3 +357,5 @@ LIMIT 1
   and the four `*_vs_window.png` / `*.png` charts.
 - Historical: `history_w{30,90,180,365}.parquet` and `history_w{30,90,180,365}_{state_cold,writes_cold,gas_concentration}.png`.
 - Consolidated: `history_windows_cold.png` (cold share, all windows on one timeline; from `analysis_windows.py`).
+- Gas: `gas_daily.parquet` (daily gas used + limit; from `collect_gas.py`) and
+  `gas_warm_set.png` / `gas_intensity.png` (from `analysis_gas.py`).
