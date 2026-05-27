@@ -249,6 +249,24 @@ rising.
 
 ![Warm set vs gas](data/gas_warm_set.png)
 
+The co-movement is strong and tightens with window length — total warm state and windowed gas
+correlate at Pearson r = 0.73 (W=30) up to 0.91 (W=365) across all anchors. But the relationship is
+regime-dependent, which is the telling part:
+
+| window | r (all history) | r (2025+, limit rising) | r (≤2024, flat limit) |
+| ---: | ---: | ---: | ---: |
+| 30d | 0.73 | 0.89 | 0.57 |
+| 90d | 0.79 | 0.92 | 0.53 |
+| 180d | 0.83 | 0.95 | 0.29 |
+| 365d | 0.91 | 0.99 | −0.22 |
+
+When the gas limit actually moves (2025–2026), warm state tracks it almost perfectly (r up to 0.99)
+— capacity is the driver. In the flat-30M-limit era through 2024 the correlation weakens, and for
+the 365-day window it reverses (r = −0.22): with capacity held fixed, the warm set shrank under
+maturation while gas held steady. (These are correlations of trending levels, so the full-history
+figures partly reflect a shared trend; the regime split is the sharper test — gas explains the warm
+set precisely when gas is the thing changing.)
+
 ### But intensity per gas is falling (Q2)
 
 The warm set grows with gas, but **sub-proportionally**. Distinct storage slots touched per

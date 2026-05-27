@@ -152,3 +152,19 @@ for yr in years:
     print(f"{yr:>6}{g['gas_limit'].mean() / 1e6:>14.1f}"
           f"{(g['gas_used'].mean() / 7200) / 1e6:>17.1f}"
           f"{w['unique_storage_slots'].mean() / 1e6:>15.1f}{w['slots_per_mgas'].mean():>12.2f}")
+
+
+# %%
+# Correlation: total warm state (slots + accounts) vs windowed gas, overall and by gas-limit regime.
+print("\nCorrelation of total warm state vs windowed gas used:")
+print(f"{'W':>5}{'r(all)':>9}{'rho(all)':>10}{'r(2025+)':>10}{'r(<=2024)':>11}")
+for w in WINDOWS:
+    df = frames[w].copy()
+    df["warm_state"] = df["unique_storage_slots"] + df["unique_accounts"]
+    recent = df[df["date"].dt.year >= 2025]
+    early = df[df["date"].dt.year <= 2024]
+    r = df["warm_state"].corr(df["win_gas"])
+    rho = df["warm_state"].rank().corr(df["win_gas"].rank())  # Spearman without scipy
+    r_recent = recent["warm_state"].corr(recent["win_gas"])
+    r_early = early["warm_state"].corr(early["win_gas"])
+    print(f"{w:>4}d{r:>9.2f}{rho:>10.2f}{r_recent:>10.2f}{r_early:>11.2f}")
