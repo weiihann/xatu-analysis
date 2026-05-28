@@ -76,37 +76,68 @@ frames = {w: load_with_gas(w) for w in WINDOWS}
 
 
 # %%
-# Q1 — warm set vs the gas that produced it, per window (one self-scaled dual-axis panel each).
+# Q1 — warm state vs gas, per window. Gas is shown as gas-used-per-block (window-independent,
+# the natural 15M->30M capacity unit), so it collapses to a single line on the right axis.
 w30 = frames[30]
 gd = gas.copy()
 gd["date"] = pd.to_datetime(gd["block"].map(block_to_date)).dt.tz_localize(None)
 lo, hi = w30["date"].min().strftime("%Y-%m-%d"), w30["date"].max().strftime("%Y-%m-%d")
-
 Q1_WINDOWS = [30, 180, 365]
-fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+gas_per_block = (gd.set_index("date")["gas_used"] / 7200).rolling(30, min_periods=1).mean() / 1e6
+
+
+# %%
+# Absolute warm state (slots + accounts, millions) per window vs gas/block.
+fig1b = make_subplots(specs=[[{"secondary_y": True}]])
 for w in Q1_WINDOWS:
     df = frames[w]
     warm_state = (df["unique_storage_slots"] + df["unique_accounts"]) / 1e6
-    color = WINDOW_COLORS[w]
-    fig1.add_trace(go.Scatter(x=df["date"], y=warm_state, name=f"W={w}d warm",
-                              legendgroup=f"w{w}", line=dict(color=color, width=2.5)),
-                   secondary_y=False)
-    fig1.add_trace(go.Scatter(x=df["date"], y=df["win_gas"] / 1e12, name=f"W={w}d gas",
-                              legendgroup=f"w{w}", line=dict(color=color, width=1.5, dash="dot")),
-                   secondary_y=True)
-add_forks(fig1, lo, hi)
-fig1.update_layout(
-    title="Warm state and the gas that produced it, by window"
-          "<br><sub>solid = warm state (slots + accounts, left axis); dotted = gas used (right axis); "
-          "trailing W days</sub>",
+    fig1b.add_trace(go.Scatter(x=df["date"], y=warm_state, name=f"W={w}d warm state",
+                               line=dict(color=WINDOW_COLORS[w], width=2.5)), secondary_y=False)
+fig1b.add_trace(go.Scatter(x=gas_per_block.index, y=gas_per_block.values, name="gas used / block",
+                           line=dict(color="#455A64", width=1.5, dash="dot")), secondary_y=True)
+add_forks(fig1b, lo, hi)
+fig1b.update_layout(
+    title="Warm state by window vs gas used per block"
+          "<br><sub>warm state = slots + accounts touched in the trailing W days (left); "
+          "gas/block smoothed over 30 days (right)</sub>",
     template="plotly_white", width=1300, height=650,
     legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
 )
-fig1.update_xaxes(title="date", gridcolor="lightgray")
-fig1.update_yaxes(title_text="warm state — slots + accounts (M)", secondary_y=False, gridcolor="lightgray")
-fig1.update_yaxes(title_text="gas used over window (×10¹²)", secondary_y=True)
-fig1.write_image(DATA_DIR / "gas_warm_set.png", scale=2)
-show(fig1)
+fig1b.update_xaxes(title="date", gridcolor="lightgray")
+fig1b.update_yaxes(title_text="warm state — slots + accounts (M)", secondary_y=False,
+                   gridcolor="lightgray")
+fig1b.update_yaxes(title_text="gas used per block (M)", secondary_y=True)
+fig1b.write_image(DATA_DIR / "gas_warm_set_perblock.png", scale=2)
+show(fig1b)
+
+
+# %%
+# Variant (share) — warm state as a fraction of total live state, vs gas/block.
+# Normalises for growth: absolute warm M can rise just because total state grew.
+fig1c = make_subplots(specs=[[{"secondary_y": True}]])
+for w in Q1_WINDOWS:
+    df = frames[w]
+    warm_share = 100 * (df["unique_storage_slots"] + df["unique_accounts"]) \
+        / (df["total_storages"] + df["total_accounts"])
+    fig1c.add_trace(go.Scatter(x=df["date"], y=warm_share, name=f"W={w}d warm share",
+                               line=dict(color=WINDOW_COLORS[w], width=2.5)), secondary_y=False)
+fig1c.add_trace(go.Scatter(x=gas_per_block.index, y=gas_per_block.values, name="gas used / block",
+                           line=dict(color="#455A64", width=1.5, dash="dot")), secondary_y=True)
+add_forks(fig1c, lo, hi)
+fig1c.update_layout(
+    title="Warm-state SHARE by window vs gas used per block"
+          "<br><sub>warm share = (slots + accounts touched in W days) / total live state (left); "
+          "gas/block smoothed over 30 days (right)</sub>",
+    template="plotly_white", width=1300, height=650,
+    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
+)
+fig1c.update_xaxes(title="date", gridcolor="lightgray")
+fig1c.update_yaxes(title_text="warm state as % of total live state", ticksuffix="%",
+                   secondary_y=False, gridcolor="lightgray")
+fig1c.update_yaxes(title_text="gas used per block (M)", secondary_y=True)
+fig1c.write_image(DATA_DIR / "gas_warm_set_perblock_pct.png", scale=2)
+show(fig1c)
 
 
 # %%
