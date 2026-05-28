@@ -240,14 +240,23 @@ capacity expansion is the lever behind the recent cold-state decline.
 
 ### The warm set tracks gas (Q1)
 
-Plotting the total warm state — storage slots plus accounts touched in the trailing W days —
-against the gas used over the same window, at W = 30, 180, and 365 days, the warm state rises as the
-gas limit unlocks more room, clearest in the 2025–2026 ramp where gas steps up at the limit hikes
-and the warm state climbs with it. The longer windows are U-shaped: through the flat-30M-limit era
-(2023–2024) the warm state *shrank* as activity concentrated, then turned up once the limit started
-rising.
+We pair the warm set (storage slots plus accounts touched in the trailing W days) with gas used
+**per block** — the natural, window-independent capacity unit, the staircase that steps ~15M→30M as
+the limit rose 30M→60M at roughly constant ~50% utilization.
 
-![Warm set vs gas](data/gas_warm_set.png)
+In **absolute** terms, the warm state rises as the gas/block staircase ramps in 2025–2026; the
+longer windows are U-shaped — shrinking through the flat-30M-limit era (2023–2024) as activity
+concentrated, then turning up once the limit rose.
+
+![Warm state vs gas/block](data/gas_warm_set_perblock.png)
+
+As a **share of total live state** — which controls for the fact that the state itself keeps growing
+— the picture is more sober. The warm share fell from 2023 into early 2025 (W=365: ~32% → ~22%),
+then recovered only partway as gas ramped (~27% by 2026, still below its 2023 level). So the
+absolute warm-set growth is partly just keeping pace with a growing state: a wider gas budget buys
+back some, not all, of the ground lost to concentration.
+
+![Warm-state share vs gas/block](data/gas_warm_set_perblock_pct.png)
 
 The co-movement is strong and tightens with window length — total warm state and windowed gas
 correlate at Pearson r = 0.73 (W=30) up to 0.91 (W=365) across all anchors. But the relationship is
@@ -379,4 +388,4 @@ LIMIT 1
 - Historical: `history_w{30,90,180,365}.parquet` and `history_w{30,90,180,365}_{state_cold,writes_cold,gas_concentration}.png`.
 - Consolidated: `history_windows_cold.png` (cold share, all windows on one timeline; from `analysis_windows.py`).
 - Gas: `gas_daily.parquet` (daily gas used + limit; from `collect_gas.py`) and
-  `gas_warm_set.png` / `gas_intensity.png` (from `analysis_gas.py`).
+  `gas_warm_set_perblock.png` / `gas_warm_set_perblock_pct.png` / `gas_intensity.png` (from `analysis_gas.py`).
