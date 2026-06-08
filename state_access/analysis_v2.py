@@ -15,6 +15,7 @@ which is `(window_days, slice ∈ {w_only, r_only, rw}, n_w, n_r, n_keys)`. From
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Iterable
 from typing import Literal
@@ -23,7 +24,23 @@ import pandas as pd
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 
+from state_access.config import DATA_DIR
 from state_access.config_v2 import BINS, DATA_DIR_V2, WINDOWS_V2
+
+# Live-state denominators come from `data/totals.json` (produced by the original collect.py
+# against the same anchor). We use them to express Q1 as a percentage of state size — the
+# tier-relevant framing — alongside the absolute counts.
+_TOTALS_PATH = DATA_DIR / "totals.json"
+
+
+def _load_totals() -> dict[str, int]:
+    if not _TOTALS_PATH.exists():
+        raise RuntimeError(
+            f"{_TOTALS_PATH} not found — run `uv run python -m state_access.collect` "
+            "first so the live-state totals are available."
+        )
+    with _TOTALS_PATH.open() as f:
+        return json.load(f)
 
 ACCESS_TYPES = ["W", "R", "RW_intersect", "RW_union", "W_only", "R_only"]
 ACCESS_COLORS = {
@@ -88,8 +105,13 @@ def _key_in_set(row: pd.Series, access_type: str) -> bool:
     raise ValueError(access_type)
 
 
-def q1_warmth(hist: pd.DataFrame) -> pd.DataFrame:
-    """Set sizes |W|, |R|, |R∩W|, |R∪W|, |W-only|, |R-only| per window."""
+def q1_warmth(hist: pd.DataFrame, total_live: int | None = None) -> pd.DataFrame:
+    """Set sizes |W|, |R|, |R∩W|, |R∪W|, |W-only|, |R-only| per window.
+
+    If `total_live` is given, also emits `<access_type>_pct` columns (each set's share of
+    the live-state denominator) and a `total_live` column. The pct view is the
+    tier-relevant framing — what fraction of live state ends up Active under a given W.
+    """
     rows = []
     for w in sorted(hist["window_days"].unique()):
         sub = hist[hist["window_days"] == w]
@@ -106,7 +128,27 @@ def q1_warmth(hist: pd.DataFrame) -> pd.DataFrame:
             "W_only":       w_only,
             "R_only":       r_only,
         })
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    if total_live is not None:
+        out["total_live"] = int(total_live)
+        for at in ACCESS_TYPES:
+            out[f"{at}_pct"] = 100 * out[at] / int(total_live)
+    return out
+
+
+def q1_warmth_combined(slot_hist: pd.DataFrame, account_hist: pd.DataFrame,
+                       totals: dict[str, int]) -> pd.DataFrame:
+    """Sum slot + account warmth per window; denominator is the sum of live totals."""
+    q1_s = q1_warmth(slot_hist)
+    q1_a = q1_warmth(account_hist)
+    merged = q1_s.merge(q1_a, on="window_days", suffixes=("_slot", "_account"))
+    total_live = int(totals["storages"]) + int(totals["accounts"])
+    out = pd.DataFrame({"window_days": merged["window_days"]})
+    out["total_live"] = total_live
+    for at in ACCESS_TYPES:
+        out[at] = merged[f"{at}_slot"] + merged[f"{at}_account"]
+        out[f"{at}_pct"] = 100 * out[at] / total_live
+    return out
 
 
 def q2_composition(hist: pd.DataFrame) -> pd.DataFrame:
@@ -179,27 +221,32 @@ def q3_concentration(hist: pd.DataFrame, fractions: Iterable[float] = (0.01, 0.1
     return pd.DataFrame(rows)
 
 
-def _plot_warmth(q1: pd.DataFrame, object_type: str) -> go.Figure:
-    """4 lines: the 3 disjoint partition pieces + the union.
+def _plot_warmth(q1: pd.DataFrame, object_type: str, total_live: int) -> go.Figure:
+    """4 lines: the 3 disjoint partition pieces + the union, plotted as % of live state.
 
     Plot W, R, RW_intersect, RW_union too as derived quantities — but in practice |W| ≈
     |R∩W| for both slots and accounts on every window (every written object is also read
     in the same window), so a 6-line chart has heavy overlap. The 3-partition view is the
-    information-bearing one.
+    information-bearing one. Y-axis is % of live state under EIP-8188's denominator, so
+    "R∪W at W=30 = 4.2%" reads directly as "the Active tier under that policy is 4.2% of
+    state".
     """
     fig = go.Figure()
     primary = ["W_only", "R_only", "RW_intersect", "RW_union"]
     for at in primary:
         fig.add_trace(go.Scatter(
-            x=q1["window_days"], y=q1[at] / 1e6, name=at,
+            x=q1["window_days"], y=q1[f"{at}_pct"], name=at,
             mode="lines+markers",
             line=dict(color=ACCESS_COLORS[at], width=2.5, dash=ACCESS_DASH[at]),
         ))
+    label = "live state" if object_type == "combined" else f"live {object_type}s"
     fig.update_layout(
-        title=f"Q1 — Warmth: unique {object_type}s by access partition and window"
-              f"<br><sub>R∪W is the warm set; R-only / W-only / R∩W partition it</sub>",
+        title=f"Q1 — Warmth: {label} touched, by access partition and window"
+              f"<br><sub>denominator = {total_live:,}; R∪W is the warm set; "
+              f"R-only / W-only / R∩W partition it</sub>",
         xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
-        yaxis=dict(title=f"unique {object_type}s (millions)", gridcolor="lightgray", rangemode="tozero"),
+        yaxis=dict(title=f"% of {label}", ticksuffix="%",
+                   gridcolor="lightgray", rangemode="tozero"),
         template="plotly_white", width=1100, height=600,
         legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
     )
@@ -282,7 +329,10 @@ def _show(fig: go.Figure) -> None:
             pass
 
 
-def run_one(object_type: str) -> None:
+_TOTAL_KEY = {"slot": "storages", "account": "accounts"}
+
+
+def run_one(object_type: str, totals: dict[str, int]) -> None:
     p = DATA_DIR_V2 / f"{object_type}_histogram.parquet"
     if not p.exists():
         print(f"  no histogram at {p}; run collect_v2 first")
@@ -291,7 +341,8 @@ def run_one(object_type: str) -> None:
     print(f"\n>>> {object_type}: {len(hist):,} histogram rows over "
           f"{hist['window_days'].nunique()} windows")
 
-    q1 = q1_warmth(hist)
+    total_live = int(totals[_TOTAL_KEY[object_type]])
+    q1 = q1_warmth(hist, total_live=total_live)
     q2 = q2_composition(hist)
     q3 = q3_concentration(hist)
 
@@ -303,11 +354,12 @@ def run_one(object_type: str) -> None:
     diff = (q1["RW_union"] - (q1["W"] + q1["R"] - q1["RW_intersect"])).abs().max()
     assert diff == 0, f"identity |R∪W|=|R|+|W|-|R∩W| broken by {diff}"
     assert (q1["W"] >= 0).all() and (q1["R"] >= 0).all()
+    assert (q1["RW_union"] <= total_live).all(), "warm set exceeds live state"
     valid = q3.dropna(subset=["top_1pct_share", "top_10pct_share"])
     assert (valid["top_10pct_share"] >= valid["top_1pct_share"]).all(), \
         "top-10% must be ≥ top-1%"
 
-    fig1 = _plot_warmth(q1, object_type)
+    fig1 = _plot_warmth(q1, object_type, total_live)
     fig1.write_image(DATA_DIR_V2 / f"q1_warmth_{object_type}.png", scale=2)
     _show(fig1)
 
@@ -324,10 +376,45 @@ def run_one(object_type: str) -> None:
     _show(fig3b)
 
 
+def run_combined(totals: dict[str, int]) -> None:
+    """Q1-only chart pooling slots + accounts as 'state objects'.
+
+    Denominator: live storages + live accounts. The combined view is the natural
+    tier-policy denominator: "what fraction of all state objects (slots ∪ accounts) ends
+    up Active under each W?".
+    """
+    slot_p = DATA_DIR_V2 / "slot_histogram.parquet"
+    account_p = DATA_DIR_V2 / "account_histogram.parquet"
+    if not (slot_p.exists() and account_p.exists()):
+        print("  combined chart needs both slot + account histograms; skipping")
+        return
+    slot_hist = pd.read_parquet(slot_p)
+    account_hist = pd.read_parquet(account_p)
+    q1c = q1_warmth_combined(slot_hist, account_hist, totals)
+    q1c.to_parquet(DATA_DIR_V2 / "q1_warmth_combined.parquet", index=False)
+
+    total_live = int(q1c["total_live"].iloc[0])
+    diff = (q1c["RW_union"] - (q1c["W"] + q1c["R"] - q1c["RW_intersect"])).abs().max()
+    assert diff == 0, f"combined identity broken by {diff}"
+    assert (q1c["RW_union"] <= total_live).all(), "combined warm set exceeds total state"
+
+    fig = _plot_warmth(q1c, "combined", total_live)
+    fig.write_image(DATA_DIR_V2 / "q1_warmth_combined.png", scale=2)
+    _show(fig)
+    print(f"  combined: warm-set share ranges "
+          f"{q1c['RW_union_pct'].min():.2f}% (W={q1c.iloc[0]['window_days']}d) → "
+          f"{q1c['RW_union_pct'].max():.2f}% (W={q1c.iloc[-1]['window_days']}d)")
+
+
 def main() -> None:
     DATA_DIR_V2.mkdir(parents=True, exist_ok=True)
+    totals = _load_totals()
+    print(f"Live-state totals @ block {totals['snapshot_block']:,}: "
+          f"{totals['accounts']:,} accounts, {totals['storages']:,} slots")
     for object_type in ("slot", "account"):
-        run_one(object_type)
+        run_one(object_type, totals)
+    print("\n>>> combined")
+    run_combined(totals)
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
 

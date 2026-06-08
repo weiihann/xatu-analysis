@@ -15,18 +15,18 @@ on the local cluster. Windows: `W ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Ob
 ## 1. Summary
 
 - **Reads dominate the warm set.** For both slots and accounts, the read-set `R` is roughly
-  **1.4× the size of the write-set `W`** at every W. At W=30d, slots have 45.5M writers
-  but 65.0M readers; at W=365d, 395M vs 560M. The fraction of the warm set you'd miss by
-  using writes-only as the "hot" definition is consistently **~30%**.
+  **1.4× the size of the write-set `W`** at every W. The warm set (`R∪W`) reaches
+  **4.3% of all live state at W=30d** and **35.2% at W=365d** (combined accounts + slots).
+  Using writes-only as the "hot" definition would miss ~30% of the warm set.
 - **There are essentially no W-only objects.** Almost every object written in window `W` is
   also read in the same window. At W ≤ 90d there are zero W-only slots; at W=180d only
   ~20k slots are write-without-read out of 240M total. Same for accounts. The
   SLOAD-before-SSTORE pattern is near-universal, and on the account side every transacting
   account also appears in at least one read relationship (`tx_from`, `call_from`, etc.).
 - **R-only is the meaningful "extra" the reads data unlocks.** It captures the asymmetric
-  half of the warm set — objects being inspected but not modified. **165M slots / 17M
-  accounts** at W=365d are read-only-hot. These are immutable parameters, oracle reads,
-  ENS lookups, view-function targets.
+  half of the warm set — objects being inspected but not modified. R-only reaches
+  **10.6% of slots / 4.5% of accounts / 9.4% combined** at W=365d. These are immutable
+  parameters, oracle reads, ENS lookups, view-function targets.
 - **Slot accesses are heavily concentrated.** At W=30d, the top 1% of accessed slots
   captures **76% of reads / 62% of writes**. By W=365d these rise to 82% / 68%.
   Concentration *grows* with W rather than diluting, because the dense head doesn't move
@@ -94,35 +94,52 @@ rows max) where Q1 / Q2 / Q3 are derived. Code: `state_access/queries_v2.py`,
 
 ## 4. Q1 — Warmth (set sizes)
 
-Per `(access_type, W, object_type)` unique counts. Slots first (millions of unique
-`(contract, slot)` pairs):
+Per `(access_type, W, object_type)`, set size as a share of the live-state denominator.
+Live-state totals come from `execution_state_size` at the anchor: **1,552,604,459 slots**,
+**379,632,901 accounts**, **1,932,237,360 combined** (block 24,870,000).
+
+**Slots** (% of 1.55B live slots):
 
 | W (days) | R∪W | R∩W | R-only | W-only |
 |---:|---:|---:|---:|---:|
-| 1   |   2.6 |   1.5 |   1.0 |      0 |
-| 7   |  15.4 |   9.9 |   5.5 |      0 |
-| 14  |  32.1 |  22.1 |  10.0 |      0 |
-| 30  |  65.0 |  45.5 |  19.4 |      0 |
-| 60  | 125.9 |  89.6 |  36.3 |      0 |
-| 90  | 174.7 | 123.8 |  50.9 |      0 |
-| 180 | 332.2 | 240.5 |  91.7 | 19,793 |
-| 365 | 559.7 | 394.9 | 164.8 | 19,736 |
+| 1   |  0.17% |  0.10% |  0.07% | 0.000% |
+| 7   |  0.99% |  0.64% |  0.36% | 0.000% |
+| 14  |  2.07% |  1.42% |  0.64% | 0.000% |
+| 30  |  4.18% |  2.93% |  1.25% | 0.000% |
+| 60  |  8.11% |  5.77% |  2.34% | 0.000% |
+| 90  | 11.26% |  7.98% |  3.28% | 0.000% |
+| 180 | 21.40% | 15.49% |  5.91% | 0.001% |
+| 365 | 36.05% | 25.43% | 10.61% | 0.001% |
 
-Accounts (millions of unique addresses; W-only column is raw count, not millions):
+**Accounts** (% of 380M live accounts):
 
 | W (days) | R∪W | R∩W | R-only | W-only |
 |---:|---:|---:|---:|---:|
-| 1   |   0.9 |   0.7 |   0.1 |  0 |
-| 7   |   4.9 |   4.3 |   0.6 |  0 |
-| 14  |   8.4 |   7.3 |   1.1 |  0 |
-| 30  |  17.2 |  15.4 |   1.7 |  0 |
-| 60  |  31.5 |  28.9 |   2.6 |  0 |
-| 90  |  46.8 |  43.5 |   3.3 |  0 |
-| 180 |  80.3 |  72.3 |   8.1 | 32 |
-| 365 | 120.9 | 103.8 |  17.0 |  0 |
+| 1   |  0.23% |  0.19% |  0.04% | 0.000% |
+| 7   |  1.29% |  1.13% |  0.15% | 0.000% |
+| 14  |  2.21% |  1.93% |  0.28% | 0.000% |
+| 30  |  4.53% |  4.07% |  0.46% | 0.000% |
+| 60  |  8.29% |  7.60% |  0.69% | 0.000% |
+| 90  | 12.34% | 11.46% |  0.88% | 0.000% |
+| 180 | 21.16% | 19.04% |  2.12% | 0.000% |
+| 365 | 31.84% | 27.35% |  4.49% | 0.000% |
+
+**Combined** — pooling slots + accounts against the combined denominator (1.93B):
+
+| W (days) | R∪W | R∩W | R-only | W-only |
+|---:|---:|---:|---:|---:|
+| 1   |  0.18% |  0.12% |  0.06% | 0.000% |
+| 7   |  1.05% |  0.74% |  0.32% | 0.000% |
+| 14  |  2.10% |  1.52% |  0.57% | 0.000% |
+| 30  |  4.25% |  3.16% |  1.10% | 0.000% |
+| 60  |  8.15% |  6.13% |  2.02% | 0.000% |
+| 90  | 11.47% |  8.66% |  2.81% | 0.000% |
+| 180 | 21.35% | 16.19% |  5.17% | 0.001% |
+| 365 | 35.22% | 25.81% |  9.41% | 0.001% |
 
 ![Q1 warmth — slots](data/v2/q1_warmth_slot.png)
 ![Q1 warmth — accounts](data/v2/q1_warmth_account.png)
+![Q1 warmth — combined](data/v2/q1_warmth_combined.png)
 
 The four lines are the partition pieces; `R∪W` is the warm set, `R∩W` is the "truly
 active" sub-tier. Two observations:
