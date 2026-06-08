@@ -26,6 +26,9 @@ from state_access.config_v2 import ANCHOR_BLOCK_V2, DATA_DIR_V2, WINDOWS_V2
 OBJECT_TYPES: dict[str, Callable[[int, int], str]] = {
     "slot": queries_v2.slot_histogram,
     "account": queries_v2.account_histogram,
+    # Typed slot histogram with per-key counts split by value transition
+    # (create / update / delete for writes, zero / nonzero for reads).
+    "slot_typed": queries_v2.slot_typed_histogram,
 }
 
 
@@ -37,20 +40,26 @@ def _load_existing(object_type: str) -> tuple[pd.DataFrame, set[int]]:
     """Return (existing histogram rows, windows already present)."""
     p = _parquet_path(object_type)
     if not p.exists():
-        return pd.DataFrame(columns=["window_days", "slice", "n_w", "n_r", "n_keys"]), set()
+        return pd.DataFrame(), set()
     df = pd.read_parquet(p)
     return df, set(int(w) for w in df["window_days"].unique())
 
 
 def _run_cell(object_type: str, window_days: int) -> pd.DataFrame:
-    """Run one (object_type, window_days) query, returning the histogram with W tagged."""
+    """Run one (object_type, window_days) query, returning the histogram with W tagged.
+
+    Column shape varies by `object_type`: the slot/account histograms emit
+    `(slice, n_w, n_r, n_keys)`; the slot_typed histogram emits
+    `(n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero, n_keys)`. We just
+    propagate whatever the query returned plus `window_days`.
+    """
     builder = OBJECT_TYPES[object_type]
     sql = builder(ANCHOR_BLOCK_V2, window_days)
-    # 90 min ceiling — W=365 on slots is the worst case; raise if it ever bites.
+    # 90 min ceiling — slot W=365 is the worst case; raise if it ever bites.
     df = run_query(sql, profile="primary", settings={"max_execution_time": 5400})
     df = df.copy()
     df["window_days"] = window_days
-    return df[["window_days", "slice", "n_w", "n_r", "n_keys"]]
+    return df
 
 
 def collect(object_type: str) -> pd.DataFrame:
@@ -66,7 +75,7 @@ def collect(object_type: str) -> pd.DataFrame:
         df = _run_cell(object_type, w)
         elapsed = time.time() - t0
         n_keys_total = int(df["n_keys"].sum())
-        n_slices = df["slice"].nunique()
+        n_slices = df["slice"].nunique() if "slice" in df.columns else 0
         print(f"  {object_type} W={w:>3}d: {len(df):>6} rows, "
               f"{n_keys_total:>14,} total keys, {n_slices} slices, {elapsed:>6.1f}s")
         # Persist after each cell so a long run can be killed and resumed.

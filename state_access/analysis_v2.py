@@ -138,6 +138,76 @@ def q1_warmth(hist: pd.DataFrame, total_live: int | None = None) -> pd.DataFrame
     return out
 
 
+def q1_warmth_slot_typed(typed_hist: pd.DataFrame, total_live: int) -> pd.DataFrame:
+    """Per-window slot warmth split by value-transition type.
+
+    `typed_hist` has rows `(window_days, n_w_create, n_w_update, n_w_delete, n_r_zero,
+    n_r_nonzero, n_keys)`. Emits one row per `window_days` with:
+
+    - Top-level sets: `W`, `R` (deduped against W — additive partition), `RW_union`.
+    - W subtype counts (overlap allowed): keys with any create / update / delete event.
+    - W pure-partition counts (disjoint): keys whose only writes are of one type.
+    - R subtype counts on R-only keys (overlap allowed): any zero / any nonzero read.
+    - R pure-partition counts on R-only keys (disjoint): only-zero / only-nonzero / mixed.
+
+    Also emits `_pct` companions against `total_live`.
+    """
+    rows = []
+    for w in sorted(typed_hist["window_days"].unique()):
+        sub = typed_hist[typed_hist["window_days"] == w].copy()
+        n_kw = sub["n_w_create"] + sub["n_w_update"] + sub["n_w_delete"]
+        n_kr = sub["n_r_zero"] + sub["n_r_nonzero"]
+        in_w = n_kw > 0
+        in_r = n_kr > 0
+
+        # Top-level (matches q1_warmth on slot_histogram).
+        W = int(sub.loc[in_w, "n_keys"].sum())
+        R = int(sub.loc[in_r & ~in_w, "n_keys"].sum())
+        RW_union = int(sub.loc[in_w | in_r, "n_keys"].sum())
+
+        # W subtypes — overlap allowed.
+        W_any_create = int(sub.loc[in_w & (sub["n_w_create"] > 0), "n_keys"].sum())
+        W_any_update = int(sub.loc[in_w & (sub["n_w_update"] > 0), "n_keys"].sum())
+        W_any_delete = int(sub.loc[in_w & (sub["n_w_delete"] > 0), "n_keys"].sum())
+
+        # W disjoint partition.
+        only_create = (sub["n_w_create"] > 0) & (sub["n_w_update"] == 0) & (sub["n_w_delete"] == 0)
+        only_update = (sub["n_w_update"] > 0) & (sub["n_w_create"] == 0) & (sub["n_w_delete"] == 0)
+        only_delete = (sub["n_w_delete"] > 0) & (sub["n_w_create"] == 0) & (sub["n_w_update"] == 0)
+        W_only_create = int(sub.loc[in_w & only_create, "n_keys"].sum())
+        W_only_update = int(sub.loc[in_w & only_update, "n_keys"].sum())
+        W_only_delete = int(sub.loc[in_w & only_delete, "n_keys"].sum())
+        W_mixed = W - (W_only_create + W_only_update + W_only_delete)
+
+        # R subtypes restricted to R-only keys (the meaningful "pure reads" set).
+        r_only_mask = in_r & ~in_w
+        R_any_zero    = int(sub.loc[r_only_mask & (sub["n_r_zero"] > 0),    "n_keys"].sum())
+        R_any_nonzero = int(sub.loc[r_only_mask & (sub["n_r_nonzero"] > 0), "n_keys"].sum())
+
+        only_zero    = (sub["n_r_zero"]    > 0) & (sub["n_r_nonzero"] == 0)
+        only_nonzero = (sub["n_r_nonzero"] > 0) & (sub["n_r_zero"]    == 0)
+        R_only_zero      = int(sub.loc[r_only_mask & only_zero,    "n_keys"].sum())
+        R_only_nonzero   = int(sub.loc[r_only_mask & only_nonzero, "n_keys"].sum())
+        R_mixed          = R - (R_only_zero + R_only_nonzero)
+
+        rows.append({
+            "window_days": int(w),
+            "W": W, "R": R, "RW_union": RW_union,
+            "W_any_create": W_any_create, "W_any_update": W_any_update, "W_any_delete": W_any_delete,
+            "W_only_create": W_only_create, "W_only_update": W_only_update, "W_only_delete": W_only_delete,
+            "W_mixed": W_mixed,
+            "R_any_zero": R_any_zero, "R_any_nonzero": R_any_nonzero,
+            "R_only_zero": R_only_zero, "R_only_nonzero": R_only_nonzero, "R_mixed": R_mixed,
+        })
+    out = pd.DataFrame(rows)
+    out["total_live"] = int(total_live)
+    for col in out.columns:
+        if col in ("window_days", "total_live"):
+            continue
+        out[f"{col}_pct"] = 100 * out[col] / int(total_live)
+    return out
+
+
 def q1_warmth_combined(slot_hist: pd.DataFrame, account_hist: pd.DataFrame,
                        totals: dict[str, int]) -> pd.DataFrame:
     """Sum slot + account warmth per window; denominator is the sum of live totals."""
@@ -328,6 +398,100 @@ def _show(fig: go.Figure) -> None:
 
 _TOTAL_KEY = {"slot": "storages", "account": "accounts"}
 
+# Stacked-area colors for the W and R subtype views.
+W_TYPE_COLORS = {
+    "W_only_create": "#1976D2",
+    "W_only_update": "#FBC02D",
+    "W_only_delete": "#D32F2F",
+    "W_mixed":       "#9E9E9E",
+}
+W_TYPE_LABEL = {
+    "W_only_create": "create-only", "W_only_update": "update-only",
+    "W_only_delete": "delete-only", "W_mixed": "mixed (≥2 types)",
+}
+R_TYPE_COLORS = {
+    "R_only_zero":    "#90CAF9",
+    "R_only_nonzero": "#1565C0",
+    "R_mixed":        "#9E9E9E",
+}
+R_TYPE_LABEL = {
+    "R_only_zero": "zero-only", "R_only_nonzero": "nonzero-only", "R_mixed": "mixed",
+}
+
+
+def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int) -> go.Figure:
+    """Stacked-area of W (or R-only) split by value-transition subtype, % of live slots."""
+    if kind == "W":
+        keys = ["W_only_create", "W_only_update", "W_only_delete", "W_mixed"]
+        colors = W_TYPE_COLORS
+        labels = W_TYPE_LABEL
+        title = "Q1 — Slot W (writes) split by value transition"
+        sub = "create-only / update-only / delete-only / mixed; stacks sum to |W|"
+    else:
+        # R_mixed is always 0 — a slot with no writes in window has a stable value,
+        # so all of its reads return the same value (zero or nonzero, never both).
+        keys = ["R_only_zero", "R_only_nonzero"]
+        colors = R_TYPE_COLORS
+        labels = R_TYPE_LABEL
+        title = "Q1 — Slot R (reads-not-written) split by returned value"
+        sub = "value=0 (empty-slot probe) vs value≠0 (populated read); stacks sum to |R|"
+    fig = go.Figure()
+    for k in keys:
+        fig.add_trace(go.Scatter(
+            x=q1t["window_days"], y=q1t[f"{k}_pct"], name=labels[k],
+            mode="lines", stackgroup="one",
+            line=dict(color=colors[k], width=0.5),
+            fillcolor=colors[k],
+        ))
+    fig.update_layout(
+        title=f"{title}<br><sub>{sub}; denominator = {total_live:,} live slots</sub>",
+        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        yaxis=dict(title="% of live slots", ticksuffix="%",
+                   gridcolor="lightgray", rangemode="tozero"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
+    )
+    return fig
+
+
+def run_slot_typed(totals: dict[str, int]) -> None:
+    """Derive the typed-slot Q1 view and plot W-by-transition and R-by-value charts."""
+    p = DATA_DIR_V2 / "slot_typed_histogram.parquet"
+    if not p.exists():
+        print(f"  no typed-slot histogram at {p}; run collect_v2 first")
+        return
+    typed = pd.read_parquet(p)
+    print(f"\n>>> slot_typed: {len(typed):,} histogram rows over "
+          f"{typed['window_days'].nunique()} windows")
+    total_live = int(totals["storages"])
+    q1t = q1_warmth_slot_typed(typed, total_live)
+    q1t.to_parquet(DATA_DIR_V2 / "q1_warmth_slot_typed.parquet", index=False)
+
+    # Verifications.
+    diff = (q1t["W"] - (q1t["W_only_create"] + q1t["W_only_update"]
+                        + q1t["W_only_delete"] + q1t["W_mixed"])).abs().max()
+    assert diff == 0, f"W disjoint partition broken by {diff}"
+    diff_r = (q1t["R"] - (q1t["R_only_zero"] + q1t["R_only_nonzero"] + q1t["R_mixed"])).abs().max()
+    assert diff_r == 0, f"R disjoint partition broken by {diff_r}"
+
+    fig_w = _plot_slot_typed(q1t, "W", total_live)
+    fig_w.write_image(DATA_DIR_V2 / "q1_warmth_slot_W_typed.png", scale=2)
+    _show(fig_w)
+    fig_r = _plot_slot_typed(q1t, "R", total_live)
+    fig_r.write_image(DATA_DIR_V2 / "q1_warmth_slot_R_typed.png", scale=2)
+    _show(fig_r)
+
+    last = q1t.iloc[-1]
+    w_share = lambda k: 100 * last[k] / last["W"] if last["W"] else 0
+    r_share = lambda k: 100 * last[k] / last["R"] if last["R"] else 0
+    print(f"  W=365d: |W|={last['W']:,}; "
+          f"create-touching {w_share('W_any_create'):.1f}%, "
+          f"update-touching {w_share('W_any_update'):.1f}%, "
+          f"delete-touching {w_share('W_any_delete'):.1f}% (overlap)")
+    print(f"  W=365d: |R|={last['R']:,}; "
+          f"zero-touching {r_share('R_any_zero'):.1f}%, "
+          f"nonzero-touching {r_share('R_any_nonzero'):.1f}% (overlap)")
+
 
 def run_one(object_type: str, totals: dict[str, int]) -> None:
     p = DATA_DIR_V2 / f"{object_type}_histogram.parquet"
@@ -412,6 +576,7 @@ def main() -> None:
         run_one(object_type, totals)
     print("\n>>> combined")
     run_combined(totals)
+    run_slot_typed(totals)
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
 

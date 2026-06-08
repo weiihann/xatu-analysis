@@ -32,6 +32,17 @@ types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
   the 2–5 and 6–50 bins; account R-only is dominated by the 6–50 bin (popular contracts
   called repeatedly but never modified). For slots both sets are dominated by the
   singly-touched bin.
+- **Slot W is dominated by creations, not updates.** At W=365d, **88% of W slots have any
+  creation event** and only **21% have any update**; on a disjoint partition, **62% of W
+  slots are create-only** (write was a `0→nonzero` initialization, nothing else in
+  window). Most "warm slots" by W's definition are warm because they're being **born**,
+  not modified — state growth, not state churn. EIP-8188 only reprices updates, so the
+  policy-relevant W is closer to 4% of state at W=365d (update-touching slots), not 25%.
+- **Slot R is dominated by empty-slot probes.** At W=365d, **93% of R slots had at least
+  one read returning `value=0`** ("does this slot exist?" checks). Only **7% of R slots**
+  had any read return populated data. The `R_mixed` partition (slots with both zero and
+  nonzero reads) is identically **zero** by structure: an R-only slot has no writes in
+  window, so its value is stable through the window, so all reads return the same value.
 
 ## 2. What changed vs the original analysis
 
@@ -166,6 +177,110 @@ Three observations:
    at W=365d — R adds more relative to W at small W. For accounts, R/W is 0.19× at W=1d
    and 0.16× at W=365d — the read-only account tail grows much slower than writes.
    Both ratios are bounded above zero, so reads always add something.
+
+## 4b. Q1 typed — Slot W and R split by value transition
+
+For storage slots, both the writes and the reads carry a value transition that's
+EIP-8188-relevant:
+
+- **W splits by `(from_value, to_value)` transition**: `create` (0→nonzero, ~20k gas,
+  always Inactive-priced under EIP-8188), `update` (X→Y nonzero→nonzero, ~5k gas,
+  what the policy actually reprices), `delete` (nonzero→0, refund).
+- **R splits by the returned `value`**: `zero` (the slot was empty when read — an
+  "is this slot set?" probe) vs `nonzero` (a populated read returning real data).
+
+A single slot can have multiple write types in window (e.g. created early, updated
+later); the disjoint partition below picks slots whose writes are ALL of one type
+("create-only" etc.) and lumps the rest into "mixed". For R, the partition is trivially
+clean: an R-only slot has no writes in window, so its value is stable, so all reads
+return the same value — `R_mixed = 0` everywhere.
+
+### Slot W — partitioned by transition type (% of live state)
+
+Stacked total = `|W|`. Verification: the four columns sum exactly to W_pct from §4.
+
+| W (days) | create-only | update-only | delete-only | mixed (≥2 types) | |W| |
+|---:|---:|---:|---:|---:|---:|
+| 1   |  0.045% | 0.034% | 0.005% | 0.016% |  0.10% |
+| 7   |  0.327% | 0.135% | 0.043% | 0.133% |  0.64% |
+| 14  |  0.827% | 0.248% | 0.091% | 0.257% |  1.42% |
+| 30  |  1.748% | 0.472% | 0.162% | 0.552% |  2.93% |
+| 60  |  3.635% | 0.672% | 0.258% | 1.206% |  5.77% |
+| 90  |  4.876% | 0.862% | 0.344% | 1.893% |  7.98% |
+| 180 |  9.874% | 1.407% | 0.650% | 3.559% | 15.49% |
+| 365 | 15.675% | 2.078% | 0.939% | 6.743% | 25.43% |
+
+### Slot W — subtype touch rates (overlap allowed, % of |W|)
+
+A slot can have multiple write types in window. These are the share of |W| with at
+least one event of each type — the rows do not sum to 100%.
+
+| W (days) | any create | any update | any delete |
+|---:|---:|---:|---:|
+| 1   | 59.6% | 40.3% | 17.7% |
+| 7   | 71.4% | 28.7% | 23.3% |
+| 30  | 78.0% | 23.5% | 19.7% |
+| 90  | 84.6% | 21.6% | 20.4% |
+| 365 | 87.8% | 21.4% | 20.8% |
+
+**Read this carefully.** Of the 25.4% of live slots in |W| at W=365d:
+- **88% have at least one creation event** (76% are pure create-only); the slot is in W
+  primarily because it was *initialized* in window.
+- **21% have at least one update**; the EIP-8188-relevant subset of W.
+- **21% have at least one deletion**.
+
+The update fraction of |W| **stays remarkably stable around 21–24%** across windows from
+7d to 365d. So **|W ∩ updates| ≈ 21% × |W|** at every W of interest. At W=30d that's
+21% × 2.93% = **0.7% of live state**; at W=365d, 21% × 25.43% = **5.3% of live state**.
+These are the slots EIP-8188 would actually reprice.
+
+The create-only fraction *grows* with W (60% → 76% over 1d → 365d) because the longer
+the window, the more newly-created slots accumulate without subsequent activity. Slot
+creation is a one-shot event by nature; the singleton bin in §5 is now explained.
+
+![Q1 typed — slot W partition](data/v2/q1_warmth_slot_W_typed.png)
+
+### Slot R — partitioned by returned value (% of live state)
+
+R_mixed is omitted (always zero — see above). Stacked total = `|R|`.
+
+| W (days) | zero-only | nonzero-only | |R| |
+|---:|---:|---:|---:|
+| 1   |  0.045% | 0.022% |  0.07% |
+| 7   |  0.279% | 0.077% |  0.36% |
+| 14  |  0.513% | 0.131% |  0.64% |
+| 30  |  1.037% | 0.213% |  1.25% |
+| 60  |  2.046% | 0.293% |  2.34% |
+| 90  |  2.916% | 0.364% |  3.28% |
+| 180 |  5.373% | 0.535% |  5.91% |
+| 365 |  9.838% | 0.754% | 10.61% |
+
+### Slot R — share of |R| by returned value
+
+| W (days) | zero | nonzero |
+|---:|---:|---:|
+| 1   | 67.8% | 32.2% |
+| 7   | 78.4% | 21.6% |
+| 30  | 83.0% | 17.0% |
+| 90  | 88.9% | 11.1% |
+| 365 | 92.9% |  7.3% |
+
+**The zero-share grows monotonically with W**, reaching 93% at W=365d. So:
+
+- **Most of slot R is empty-slot probes** — `SLOAD` returning 0 against slots that
+  haven't been written in (or before) the window. Typical cases: a contract checking
+  whether a mapping entry exists (`mapping[key]` returns 0 if unset), state-existence
+  guards (`if (slot == 0) revert()`), default-value reads.
+- **Only ~7% of R at W=365d is genuine populated state inspection** — `SLOAD`
+  returning meaningful data from slots that hold real state but happen not to be
+  modified in this window (oracle parameters, contract config, immutable-style storage
+  variables filled at deploy then never changed).
+- The nonzero-only share *shrinks* with W because the universe of "ever-set slots that
+  weren't touched in 365 days" grows much slower than the universe of "slots probed
+  with `SLOAD` and found empty" — empty-slot probes scale with calldata-driven access,
+  populated reads scale with the small set of legitimately read-only state.
+
+![Q1 typed — slot R partition](data/v2/q1_warmth_slot_R_typed.png)
 
 ## 5. Q2 — Composition (access-frequency tail)
 
@@ -345,6 +460,56 @@ GROUP BY slice, n_w, n_r
 ORDER BY slice, n_w, n_r
 ```
 
+### Slot typed histogram (Q1 typed views in §4b)
+
+Same per-key GROUP BY shape as `slot_histogram`, but with five typed counters in place
+of two. The query splits each write event into `create` / `update` / `delete` by
+`(from_value, to_value)` and each read event into `zero` / `nonzero` by the returned
+`value`. Output: one row per distinct `(n_w_create, n_w_update, n_w_delete, n_r_zero,
+n_r_nonzero)` count-tuple, with `n_keys` per row.
+
+```sql
+WITH per_key AS (
+    SELECT
+        h,
+        sum(is_w_create)  AS n_w_create,
+        sum(is_w_update)  AS n_w_update,
+        sum(is_w_delete)  AS n_w_delete,
+        sum(is_r_zero)    AS n_r_zero,
+        sum(is_r_nonzero) AS n_r_nonzero
+    FROM (
+        SELECT
+            cityHash64(address, slot) AS h,
+            toUInt8(from_value =  '0x000…0' AND to_value != '0x000…0') AS is_w_create,
+            toUInt8(from_value != '0x000…0' AND to_value != '0x000…0') AS is_w_update,
+            toUInt8(from_value != '0x000…0' AND to_value =  '0x000…0') AS is_w_delete,
+            toUInt8(0) AS is_r_zero,
+            toUInt8(0) AS is_r_nonzero
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT
+            cityHash64(contract_address, slot) AS h,
+            toUInt8(0) AS is_w_create,
+            toUInt8(0) AS is_w_update,
+            toUInt8(0) AS is_w_delete,
+            toUInt8(value =  '0x000…0') AS is_r_zero,
+            toUInt8(value != '0x000…0') AS is_r_nonzero
+        FROM canonical_execution_storage_reads
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+    GROUP BY h
+)
+SELECT
+    n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero,
+    count() AS n_keys
+FROM per_key
+GROUP BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
+ORDER BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
+```
+
 ### Account histogram
 
 Account key is `cityHash64(address)`. Writes come from `balance_diffs`, `nonce_diffs`,
@@ -484,10 +649,13 @@ GROUP BY).
 state_access/data/v2/
   slot_histogram.parquet         # raw (slice, n_w, n_r, n_keys) per W (input)
   account_histogram.parquet
-  q1_warmth_{slot,account,combined}.parquet   # set sizes + pct of live state
+  slot_typed_histogram.parquet   # typed slot histogram for §4b
+  q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
+  q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
   q2_composition_{slot,account}.parquet
   q3_concentration_{slot,account}.parquet
   q1_warmth_{slot,account,combined}.png
+  q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
   q2_composition_{slot,account}.png
   q3_concentration_{top1,top10}_{slot,account}.png
 ```
