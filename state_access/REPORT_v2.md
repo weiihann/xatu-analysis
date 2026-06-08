@@ -196,6 +196,23 @@ Slot W and slot R have similar shape — both heavily singly-touched (~72–78% 
 with mid-range bins (2–5, 6–50) absorbing most of the rest. Slot reads have a slightly
 heavier 6-50 tail than slot writes.
 
+**Caveat on the singleton bin's composition.** The W set counts every row in
+`storage_diffs` as a write event, regardless of value transition. At W=30d, the
+178M storage_diff rows split into:
+
+| transition | share of all rows | share of singleton-bin slots |
+|---|---:|---:|
+| `0 → nonzero` (creation, ~20k gas) | 22.5% | **76.3%** |
+| `X → Y` (update, ~5k gas) | 70.0% | 16.6% |
+| `nonzero → 0` (deletion, refund) | 7.5% | 7.1% |
+
+So the "78% of slot W is singleton" finding is really "76% of those singletons are
+newly-created slots that haven't been touched again in 30 days". State growth, not
+state churn. EIP-8188-relevant repricing only affects updates (creations are always
+Inactive-priced by construction); for a policy-focused view, W should be filtered to
+`from_value != 0` — that filter is a one-line addition to `queries_v2.py` (it would
+change the headline |W| numbers downward by ~22%).
+
 **Accounts — W set (writes per object):**
 
 | W (days) | 1 | 2-5 | 6-50 | 51-500 | 500+ |
@@ -283,7 +300,134 @@ The clearest threads worth pulling next:
   *only* warm state (under chosen `W`)? Per-tx framing gives a user-impact answer rather
   than a population-level one.
 
-## Appendix — outputs
+## Appendix A — SQL queries
+
+The full SQL builders live in `state_access/queries_v2.py`. One query per
+`(W, object_type)` runs the per-key GROUP BY on a `cityHash64` key, then collapses to a
+`(slice, n_w, n_r, n_keys)` histogram. The slice partition (`w_only` / `r_only` / `rw`)
+is what gets re-mapped in Python to the W / R sets used throughout this report.
+
+### Slot histogram
+
+Storage-slot key is `(contract_address, slot)`. Writes come from `storage_diffs`; reads
+from `storage_reads`. The inner UNION ALL tags each row with `is_w` / `is_r`; the outer
+GROUP BY on `cityHash64(address, slot)` sums them per key; the final GROUP BY collapses
+to `(slice, n_w, n_r, n_keys)`.
+
+```sql
+WITH per_key AS (
+    SELECT
+        h,
+        sum(is_w) AS n_w,
+        sum(is_r) AS n_r
+    FROM (
+        SELECT cityHash64(address, slot) AS h, 1 AS is_w, 0 AS is_r
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(contract_address, slot) AS h, 0 AS is_w, 1 AS is_r
+        FROM canonical_execution_storage_reads
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+    GROUP BY h
+)
+SELECT
+    multiIf(n_w > 0 AND n_r > 0, 'rw',
+            n_w > 0,             'w_only',
+                                 'r_only') AS slice,
+    n_w,
+    n_r,
+    count() AS n_keys
+FROM per_key
+GROUP BY slice, n_w, n_r
+ORDER BY slice, n_w, n_r
+```
+
+### Account histogram
+
+Account key is `cityHash64(address)`. Writes come from `balance_diffs`, `nonce_diffs`,
+and `contracts` (`contract_address` is the newly-materialized account). Reads come from
+`balance_reads`, `nonce_reads`, and `address_appearances` filtered to non-ERC*
+relationships. Same outer aggregation as the slot query.
+
+```sql
+WITH per_key AS (
+    SELECT
+        h,
+        sum(is_w) AS n_w,
+        sum(is_r) AS n_r
+    FROM (
+        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        FROM canonical_execution_balance_diffs
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        FROM canonical_execution_nonce_diffs
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(contract_address) AS h, 1 AS is_w, 0 AS is_r
+        FROM canonical_execution_contracts
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        FROM canonical_execution_balance_reads
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        FROM canonical_execution_nonce_reads
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        FROM canonical_execution_address_appearances
+        WHERE meta_network_name = 'mainnet'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+          AND relationship IN ('call_from', 'call_to', 'tx_from', 'tx_to',
+                               'miner_fee', 'factory', 'create',
+                               'suicide_refund', 'suicide')
+    )
+    GROUP BY h
+)
+SELECT
+    multiIf(n_w > 0 AND n_r > 0, 'rw',
+            n_w > 0,             'w_only',
+                                 'r_only') AS slice,
+    n_w,
+    n_r,
+    count() AS n_keys
+FROM per_key
+GROUP BY slice, n_w, n_r
+ORDER BY slice, n_w, n_r
+```
+
+### Window block range
+
+For each `window_days = W`, the trailing block range is
+`bn_lo = anchor − W·7200`, `bn_hi = anchor`, using the post-Merge 7,200-blocks-per-day
+cadence. Anchor is `24,870,000`. The eight window values are
+`W ∈ {1, 7, 14, 30, 60, 90, 180, 365}`.
+
+### Live-state totals
+
+Live-state denominators for the % framing come from `execution_state_size` at the anchor:
+
+```sql
+SELECT block_number, accounts, storages
+FROM execution_state_size
+WHERE meta_network_name = 'mainnet' AND block_number <= 24870000
+ORDER BY block_number DESC
+LIMIT 1
+```
+
+At the anchor: 1,552,604,459 slots, 379,632,901 accounts, 1,932,237,360 combined.
+
+## Appendix B — outputs
 
 ```
 state_access/data/v2/
