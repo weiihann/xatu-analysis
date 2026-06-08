@@ -454,6 +454,46 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
     return fig
 
 
+def run_slot_update_coverage() -> None:
+    """Plot the per-W warm/cold update split persisted by `collect_v2` (or the smoke run)."""
+    p = DATA_DIR_V2 / "slot_update_coverage.parquet"
+    if not p.exists():
+        print(f"  no slot_update_coverage parquet at {p}; run the sweep first")
+        return
+    df = pd.read_parquet(p).sort_values("window_days").reset_index(drop=True)
+    print(f"\n>>> slot_update_coverage: {len(df)} windows")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df["window_days"], y=df["pct_warm"], name="warm",
+        mode="lines+markers",
+        line=dict(color="#1565C0", width=3),
+        marker=dict(size=8),
+    ))
+    cold_pct = 100 - df["pct_warm"]
+    fig.add_trace(go.Scatter(
+        x=df["window_days"], y=cold_pct, name="cold",
+        mode="lines+markers",
+        line=dict(color="#C2185B", width=2, dash="dash"),
+        marker=dict(size=6),
+    ))
+    fig.update_layout(
+        title="Slot UPDATE coverage — % of update events that are warm under EIP-8188 semantics"
+              "<br><sub>warm = the slot had at least one prior create-or-update event in window; "
+              "cold = the update IS the slot's first warming event</sub>",
+        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        yaxis=dict(title="% of update events", ticksuffix="%", range=[0, 100],
+                   gridcolor="lightgray"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=0.99, y=0.5, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
+    )
+    fig.write_image(DATA_DIR_V2 / "slot_update_coverage.png", scale=2)
+    _show(fig)
+    print(f"  W=1d:  warm={df.iloc[0]['pct_warm']:.2f}%  cold={cold_pct.iloc[0]:.2f}%")
+    print(f"  W=30d: warm={df[df['window_days']==30]['pct_warm'].iloc[0]:.2f}%")
+    print(f"  W=365d: warm={df.iloc[-1]['pct_warm']:.2f}%  cold={cold_pct.iloc[-1]:.2f}%")
+
+
 def run_slot_typed(totals: dict[str, int]) -> None:
     """Derive the typed-slot Q1 view and plot W-by-transition and R-by-value charts."""
     p = DATA_DIR_V2 / "slot_typed_histogram.parquet"
@@ -577,6 +617,7 @@ def main() -> None:
     print("\n>>> combined")
     run_combined(totals)
     run_slot_typed(totals)
+    run_slot_update_coverage()
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
 

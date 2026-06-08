@@ -43,6 +43,12 @@ types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
   had any read return populated data. The `R_mixed` partition (slots with both zero and
   nonzero reads) is identically **zero** by structure: an R-only slot has no writes in
   window, so its value is stable through the window, so all reads return the same value.
+- **EIP-8188 covers update gas very well at the policy-relevant W.** Under the corrected
+  per-event semantics (intra-window promotion accounted for), **94% of update SSTORE
+  events at W=30d would keep the Active price**; 97% at W=90d. The original analysis's
+  static-set check reported 84.8% at W=30d — a ~9 pp underestimate that came from
+  treating the past-W warm set as frozen across "today". The Inactive premium only
+  affects ~3–6% of updates at policy-relevant W.
 
 ## 2. What changed vs the original analysis
 
@@ -281,6 +287,80 @@ R_mixed is omitted (always zero — see above). Stacked total = R.
   populated reads scale with the small set of legitimately read-only state.
 
 ![Q1 typed — slot R partition](data/v2/q1_warmth_slot_R_typed.png)
+
+## 4c. Warm-update coverage under EIP-8188 semantics (per-event)
+
+The set-membership view in §4 / §4b is informative but it can't directly answer **"of the
+update gas spent in window, what fraction would be priced as Active under EIP-8188?"** —
+the gas-coverage question. That question is per-event, not per-key.
+
+The original analysis's `pct_update_gas_warm` tried to answer it by checking each of
+today's update events against a *static* past-W warm set. But ClickHouse's `GLOBAL IN`
+evaluates the subquery once and broadcasts a frozen hash set, so a slot that gets its
+first write today and then a second update later today is checked against the past-only
+set both times — both events come out cold even though EIP-8188 would only price the
+first one as Inactive. The static-set approach systematically **underestimates** warm
+coverage.
+
+### Definition
+
+For each window `[anchor - W·7200, anchor]`, classify every update SSTORE event
+(`from_value ≠ 0 ∧ to_value ≠ 0`) as **warm** or **cold**:
+
+- **warm** — at least one `create` (`0 → nonzero`) or `update` event happened earlier
+  on the same slot at an earlier event-order within the window.
+- **cold** — the update IS the slot's first warming event in window (no preceding
+  create-or-update for this slot in window). Deletions don't count as warming events.
+
+Algorithm — one GROUP BY on `cityHash64(address, slot)`:
+
+1. For each slot in window, count update events (`n_update`).
+2. Among the slot's create-or-update events, take the one with the smallest
+   `(block_number, transaction_index, internal_index)` order. If that earliest warming
+   event is itself an update, the slot contributes one cold update to the count;
+   otherwise, all of its updates are warm.
+
+That is: `warm_per_slot = n_update − first_cu_is_update`. Sum across slots.
+
+### Results
+
+| W (days) | total updates | warm | cold | % warm |
+|---:|---:|---:|---:|---:|
+| 1   |     3,827,500 |     3,277,106 |     550,394 | **85.62%** |
+| 7   |    28,158,628 |    25,937,983 |   2,220,645 | **92.11%** |
+| 14  |    55,135,247 |    51,051,775 |   4,083,472 | **92.59%** |
+| 30  |   125,684,703 |   117,983,724 |   7,700,979 | **93.87%** |
+| 60  |   262,053,193 |   251,043,962 |  11,009,231 | **95.80%** |
+| 90  |   402,058,353 |   387,899,906 |  14,158,447 | **96.48%** |
+| 180 |   788,431,719 |   765,249,545 |  23,182,174 | **97.06%** |
+| 365 | 1,424,321,470 | 1,389,975,882 |  34,345,588 | **97.59%** |
+
+![Slot update coverage — warm vs cold](data/v2/slot_update_coverage.png)
+
+### How this changes the story vs the original
+
+The original analysis reported `pct_update_gas_warm = 84.8%` at W=30d using the static
+past-W set. The corrected per-event measurement says **93.9% at W=30d**, climbing to
+**97.6% at W=365d**.
+
+The ~9 percentage-point gap at W=30d is the intra-window promotion the original
+couldn't see — slots that get their first write inside the W window and then get
+hit again. Under real EIP-8188 only the first hit would be Inactive-priced; under the
+static-set check both come out cold.
+
+Three readings:
+
+1. **EIP-8188's Active tier covers update gas extremely well.** At W=30d, **94%** of
+   update SSTOREs would keep the cheap Active price. At W=90d, 97%. The Inactive
+   premium only affects ~3–6% of update events at policy-relevant W.
+2. **The benefit saturates fast.** Going from W=1d → 30d buys +8 pp of coverage; going
+   from W=30d → 365d buys only another +3.7 pp. The marginal benefit of stretching W
+   beyond ~30d is small for update gas.
+3. **Cold updates correspond exactly to first-touch awakenings of cold state.** The
+   raw count of cold updates at W=365d is **34.3M slots over a year** — that's the
+   long-tail of state being reactivated after a year of dormancy. Note: this is
+   per-slot, not per-event; a slot has at most one cold-update event in window
+   (the first warming).
 
 ## 5. Q2 — Composition (access-frequency tail)
 
@@ -628,6 +708,48 @@ SELECT
 FROM per_slot
 ```
 
+### Warm-update coverage (§4c)
+
+For each W, classify every update SSTORE event in `[anchor − W·7200, anchor]` by whether
+the same slot had any earlier create-or-update event in the same window. One GROUP BY
+on `cityHash64(address, slot)`; no JOIN, no window function.
+
+```sql
+WITH slot_events AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        toUInt64(block_number) * 1000000000
+            + toUInt64(transaction_index) * 100000
+            + toUInt64(internal_index) AS event_order,
+        (from_value != '0x000…0' AND to_value != '0x000…0') AS is_update,
+        (from_value =  '0x000…0' AND to_value != '0x000…0') AS is_create
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name = 'mainnet'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+per_slot AS (
+    SELECT
+        h,
+        countIf(is_update) AS n_update,
+        -- argMinIf returns is_update of the row with the smallest event_order
+        -- among rows where (is_create OR is_update). Deletion rows are filtered out.
+        argMinIf(is_update, event_order, is_create OR is_update) AS first_cu_is_update
+    FROM slot_events
+    GROUP BY h
+    HAVING n_update > 0
+)
+SELECT
+    sum(n_update) AS total_updates,
+    sum(n_update - toUInt64(first_cu_is_update)) AS warm_updates,
+    sum(toUInt64(first_cu_is_update)) AS cold_updates,
+    round(100.0 * warm_updates / total_updates, 4) AS pct_warm
+FROM per_slot
+```
+
+`event_order` packs `(block_number, transaction_index, internal_index)` into a single
+monotone UInt64. Block numbers fit easily — `25M × 1e9 ≈ 2.5e16`, well below UInt64
+max.
+
 ### Cross-validation against the original analysis
 
 To confirm v2's W matches the original's "warm" definition at W=30d:
@@ -650,12 +772,14 @@ state_access/data/v2/
   slot_histogram.parquet         # raw (slice, n_w, n_r, n_keys) per W (input)
   account_histogram.parquet
   slot_typed_histogram.parquet   # typed slot histogram for §4b
+  slot_update_coverage.parquet   # per-W warm/cold update split for §4c
   q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
   q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
   q2_composition_{slot,account}.parquet
   q3_concentration_{slot,account}.parquet
   q1_warmth_{slot,account,combined}.png
   q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
+  slot_update_coverage.png                            # §4c warm/cold update line chart
   q2_composition_{slot,account}.png
   q3_concentration_{top1,top10}_{slot,account}.png
 ```
