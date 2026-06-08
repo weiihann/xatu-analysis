@@ -197,9 +197,9 @@ return the same value — `R_mixed = 0` everywhere.
 
 ### Slot W — partitioned by transition type (% of live state)
 
-Stacked total = `|W|`. Verification: the four columns sum exactly to W_pct from §4.
+Stacked total = W. Verification: the four columns sum exactly to W_pct from §4.
 
-| W (days) | create-only | update-only | delete-only | mixed (≥2 types) | |W| |
+| W (days) | create-only | update-only | delete-only | mixed (≥2 types) | W |
 |---:|---:|---:|---:|---:|---:|
 | 1   |  0.045% | 0.034% | 0.005% | 0.016% |  0.10% |
 | 7   |  0.327% | 0.135% | 0.043% | 0.133% |  0.64% |
@@ -242,9 +242,9 @@ creation is a one-shot event by nature; the singleton bin in §5 is now explaine
 
 ### Slot R — partitioned by returned value (% of live state)
 
-R_mixed is omitted (always zero — see above). Stacked total = `|R|`.
+R_mixed is omitted (always zero — see above). Stacked total = R.
 
-| W (days) | zero-only | nonzero-only | |R| |
+| W (days) | zero-only | nonzero-only | R |
 |---:|---:|---:|---:|
 | 1   |  0.045% | 0.022% |  0.07% |
 | 7   |  0.279% | 0.077% |  0.36% |
