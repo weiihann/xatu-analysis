@@ -94,29 +94,32 @@ rows max) where Q1 / Q2 / Q3 are derived. Code: `state_access/queries_v2.py`,
 
 ## 4. Q1 — Warmth (set sizes)
 
-Per `(access_type, W, object_type)` unique counts:
+Per `(access_type, W, object_type)` unique counts. Slots first (millions of unique
+`(contract, slot)` pairs):
 
-| W (days) | |R∪W| slots (M) | |R∩W| slots (M) | |R-only| slots (M) | |W-only| slots |
+| W (days) | R∪W | R∩W | R-only | W-only |
 |---:|---:|---:|---:|---:|
-| 1   |   2.6 |   1.5 |   1.0 | 0 |
-| 7   |  15.4 |   9.9 |   5.5 | 0 |
-| 14  |  32.1 |  22.1 |  10.0 | 0 |
-| 30  |  65.0 |  45.5 |  19.4 | 0 |
-| 60  | 125.9 |  89.6 |  36.3 | 0 |
-| 90  | 174.7 | 123.8 |  50.9 | 0 |
+| 1   |   2.6 |   1.5 |   1.0 |      0 |
+| 7   |  15.4 |   9.9 |   5.5 |      0 |
+| 14  |  32.1 |  22.1 |  10.0 |      0 |
+| 30  |  65.0 |  45.5 |  19.4 |      0 |
+| 60  | 125.9 |  89.6 |  36.3 |      0 |
+| 90  | 174.7 | 123.8 |  50.9 |      0 |
 | 180 | 332.2 | 240.5 |  91.7 | 19,793 |
 | 365 | 559.7 | 394.9 | 164.8 | 19,736 |
 
-| W (days) | |R∪W| accts (M) | |R∩W| accts (M) | |R-only| accts (M) | |W-only| accts |
+Accounts (millions of unique addresses; W-only column is raw count, not millions):
+
+| W (days) | R∪W | R∩W | R-only | W-only |
 |---:|---:|---:|---:|---:|
-| 1   |   0.9 |   0.7 |   0.1 | 0 |
-| 7   |   4.9 |   4.3 |   0.6 | 0 |
-| 14  |   8.4 |   7.3 |   1.1 | 0 |
-| 30  |  17.2 |  15.4 |   1.7 | 0 |
-| 60  |  31.5 |  28.9 |   2.6 | 0 |
-| 90  |  46.8 |  43.5 |   3.3 | 0 |
+| 1   |   0.9 |   0.7 |   0.1 |  0 |
+| 7   |   4.9 |   4.3 |   0.6 |  0 |
+| 14  |   8.4 |   7.3 |   1.1 |  0 |
+| 30  |  17.2 |  15.4 |   1.7 |  0 |
+| 60  |  31.5 |  28.9 |   2.6 |  0 |
+| 90  |  46.8 |  43.5 |   3.3 |  0 |
 | 180 |  80.3 |  72.3 |   8.1 | 32 |
-| 365 | 120.9 | 103.8 |  17.0 | 0 |
+| 365 | 120.9 | 103.8 |  17.0 |  0 |
 
 ![Q1 warmth — slots](data/v2/q1_warmth_slot.png)
 ![Q1 warmth — accounts](data/v2/q1_warmth_account.png)
