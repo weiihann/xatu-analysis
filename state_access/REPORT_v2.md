@@ -415,7 +415,8 @@ cadence. Anchor is `24,870,000`. The eight window values are
 
 ### Live-state totals
 
-Live-state denominators for the % framing come from `execution_state_size` at the anchor:
+Live-state denominators for the % framing come from `execution_state_size` at the anchor
+(ethpandaops profile — the local cluster's snapshot of this table is empty):
 
 ```sql
 SELECT block_number, accounts, storages
@@ -426,6 +427,56 @@ LIMIT 1
 ```
 
 At the anchor: 1,552,604,459 slots, 379,632,901 accounts, 1,932,237,360 combined.
+
+### Slot-write transition breakdown (Q2 caveat)
+
+Used to produce the 22.5% / 70.0% / 7.5% split of storage_diff rows by transition type,
+and the 76.3% / 16.6% / 7.1% split of singleton-bin slots. `bn_lo` / `bn_hi` are the
+W=30d window bounds; `_ZERO` is the 32-byte all-zeros string literal that storage_diffs
+uses for an empty slot.
+
+```sql
+-- Per-row mix across the whole W=30d window:
+SELECT
+    countIf(from_value =  '0x000…0' AND to_value != '0x000…0') AS creations,
+    countIf(from_value != '0x000…0' AND to_value != '0x000…0') AS updates,
+    countIf(from_value != '0x000…0' AND to_value =  '0x000…0') AS deletions,
+    countIf(from_value =  '0x000…0' AND to_value =  '0x000…0') AS noops
+FROM canonical_execution_storage_diffs
+WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+
+-- Per-slot singleton-bin mix (classified by the slot's only write in the window):
+WITH per_slot AS (
+    SELECT cityHash64(address, slot) AS h,
+           count() AS cnt,
+           argMax(from_value, block_number) AS last_from,
+           argMax(to_value,   block_number) AS last_to
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name='mainnet'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    GROUP BY h
+)
+SELECT
+    countIf(cnt = 1 AND last_from =  '0x000…0' AND last_to != '0x000…0') AS singleton_create,
+    countIf(cnt = 1 AND last_from != '0x000…0' AND last_to != '0x000…0') AS singleton_update,
+    countIf(cnt = 1 AND last_from != '0x000…0' AND last_to =  '0x000…0') AS singleton_delete
+FROM per_slot
+```
+
+### Cross-validation against the original analysis
+
+To confirm v2's W matches the original's "warm" definition at W=30d:
+
+```sql
+-- v2's |W| for slots reduces to this (count distinct slots written in window):
+SELECT uniqExact(cityHash64(address, slot)) AS w_slots
+FROM canonical_execution_storage_diffs
+WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+```
+
+Result at the W=30d anchor matches the original analysis's `unique_storage_slots` within
+HLL tolerance (45.5M vs 45.9M, ~0.7% — the original used `uniq` HLL, v2 uses exact
+GROUP BY).
 
 ## Appendix B — outputs
 
