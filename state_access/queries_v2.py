@@ -143,6 +143,69 @@ ORDER BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
 """
 
 
+def slot_update_coverage(bn_now: int, days: int) -> str:
+    """Per-window count of update SSTORE events split into warm vs cold under EIP-8188.
+
+    Definition (matches EIP-8188's Active-tier semantics within a single trailing window):
+    an update event at (block, tx_index, internal_index) is **warm** iff the same slot has
+    at least one prior create-or-update event in the same window. A deletion is not a
+    warming event. The first update-or-create on a slot in window is, by definition, the
+    warming event itself — if it's an update, that update is cold; subsequent updates on
+    the slot are warm.
+
+    Algorithm (one GROUP BY on `cityHash64(address, slot)`):
+      - For each slot, count update events in window (`n_update`).
+      - Identify whether the slot's earliest create-or-update event is an update (vs a
+        create). If it's an update: `warm = n_update - 1` (the first update is cold).
+        If it's a create: `warm = n_update` (the create primed the slot Active before
+        any update in window).
+
+    Returns a single row: `(total_updates, warm_updates, cold_updates, pct_warm)`.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    # event_order packs (block, tx_index, internal_index) into a single UInt64 monotone in
+    # event time. transaction_index < 2^32, internal_index < 2^32 in practice; pack with
+    # generous bit widths and leave a gap so deletion sentinels can't collide.
+    return f"""
+WITH slot_events AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        (toUInt64(block_number) * 1000000000) + (toUInt64(transaction_index) * 100000)
+            + toUInt64(internal_index) AS event_order,
+        (from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS is_update,
+        (from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS is_create
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name = '{NETWORK}'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+per_slot AS (
+    SELECT
+        h,
+        countIf(is_update) AS n_update,
+        -- Among create/update events only: pick the is_update flag of the earliest one.
+        -- For non-create/update events (deletions), set event_order to UInt64 max so they
+        -- never become argmin. If the first create-or-update event is an UPDATE
+        -- (`first_cu_is_update = 1`), that update is the cold one; all others on this
+        -- slot are warm. If it's a CREATE, the create primed the slot Active so every
+        -- update on the slot is warm.
+        -- argMinIf picks the `is_update` flag of the row with the smallest event_order
+        -- among rows satisfying `is_create OR is_update`. Deletion rows are filtered out.
+        argMinIf(is_update, event_order, is_create OR is_update) AS first_cu_is_update
+    FROM slot_events
+    GROUP BY h
+    HAVING n_update > 0
+)
+SELECT
+    sum(n_update) AS total_updates,
+    -- Warm count per slot = n_update - 1 if first_cu is an update; else n_update.
+    -- Equivalent: n_update - first_cu_is_update (which is 0 or 1).
+    sum(n_update - toUInt64(first_cu_is_update)) AS warm_updates,
+    sum(toUInt64(first_cu_is_update)) AS cold_updates,
+    round(100.0 * warm_updates / total_updates, 4) AS pct_warm
+FROM per_slot
+"""
+
+
 def account_histogram(bn_now: int, days: int) -> str:
     """(slice, n_w, n_r, n_keys) over account-address keys for the trailing W-day window.
 
