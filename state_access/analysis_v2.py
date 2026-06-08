@@ -42,24 +42,34 @@ def _load_totals() -> dict[str, int]:
     with _TOTALS_PATH.open() as f:
         return json.load(f)
 
-ACCESS_TYPES = ["W", "R", "RW_intersect", "RW_union", "W_only", "R_only"]
+#
+# Two-set view.
+#
+# Sources are partitioned so the sets are disjoint, additive, and named for what they mean:
+#   W   = objects that appear in `_diffs` tables in window (RAW — no dedup against reads).
+#         This matches the original analysis's "warm" definition exactly.
+#   R   = objects that appear in `_reads` / filtered `address_appearances` AND NOT in
+#         `_diffs` in the same window (deduped against writes). The pure-read extra that
+#         the reads data unlocks beyond the original analysis.
+#   R∪W = W + R (additive, since W and R are disjoint by construction). The full warm set.
+#
+# Why this framing: empirically W ⊂ R-with-overlap because every SSTORE is preceded by an
+# SLOAD at bytecode level (Solidity's "x = f(x)" codegen), and every tx_from has its nonce
+# read for tx validation. So a partition like (W-only, R-only, R∩W) collapses with
+# W-only ≈ 0 always; the two-set additive view captures the same information without the
+# misleading near-zero W-only slice.
+ACCESS_TYPES = ["W", "R", "RW_union"]
 ACCESS_COLORS = {
-    "W":            "#1565C0",
-    "R":            "#2E7D32",
-    "RW_intersect": "#6A1B9A",
-    "RW_union":     "#455A64",
-    "W_only":       "#EF6C00",
-    "R_only":       "#C2185B",
+    "W":         "#1565C0",  # original "warm"
+    "R":         "#C2185B",  # what reads add (= old R-only)
+    "RW_union":  "#455A64",  # total warm set
 }
 ACCESS_DASH = {
-    "W":            "solid",
-    "R":            "solid",
-    "RW_intersect": "solid",
-    "RW_union":     "solid",
-    "W_only":       "dash",
-    "R_only":       "dash",
+    "W":         "solid",
+    "R":         "dash",
+    "RW_union":  "solid",
 }
-SLICE_LABEL = {"w_only": "W-only", "r_only": "R-only", "rw": "R∩W"}
+SLICE_LABEL = {"W": "W (writes)", "R": "R (reads-not-written)"}
 BIN_COLORS = ["#E0E0E0", "#90CAF9", "#42A5F5", "#1565C0", "#0D47A1"]
 
 
@@ -71,18 +81,17 @@ def _bin_label(count: int) -> str:
 
 
 def _access_count(row: pd.Series, access_type: str) -> int:
-    """How many accesses this `(n_w, n_r)` key contributes under a given access_type lens."""
+    """How many accesses this `(n_w, n_r)` key contributes under a given access_type lens.
+
+    - W counts WRITE events only (`n_w`), restricted to keys in W.
+    - R counts READ events only (`n_r`), restricted to R-deduped keys (slice='r_only').
+    - R∪W counts all events for any touched key (`n_w + n_r`).
+    """
     n_w, n_r = int(row["n_w"]), int(row["n_r"])
     if access_type == "W":
-        return n_w
+        return n_w if row["slice"] in ("w_only", "rw") else 0
     if access_type == "R":
-        return n_r
-    if access_type == "W_only":
-        return n_w if row["slice"] == "w_only" else 0
-    if access_type == "R_only":
         return n_r if row["slice"] == "r_only" else 0
-    if access_type == "RW_intersect":
-        return n_w + n_r if row["slice"] == "rw" else 0
     if access_type == "RW_union":
         return n_w + n_r
     raise ValueError(access_type)
@@ -93,24 +102,20 @@ def _key_in_set(row: pd.Series, access_type: str) -> bool:
     if access_type == "W":
         return row["slice"] in ("w_only", "rw")
     if access_type == "R":
-        return row["slice"] in ("r_only", "rw")
-    if access_type == "RW_intersect":
-        return row["slice"] == "rw"
+        return row["slice"] == "r_only"
     if access_type == "RW_union":
         return True
-    if access_type == "W_only":
-        return row["slice"] == "w_only"
-    if access_type == "R_only":
-        return row["slice"] == "r_only"
     raise ValueError(access_type)
 
 
 def q1_warmth(hist: pd.DataFrame, total_live: int | None = None) -> pd.DataFrame:
-    """Set sizes |W|, |R|, |R∩W|, |R∪W|, |W-only|, |R-only| per window.
+    """Set sizes |W|, |R|, |R∪W| per window under the additive 2-set partition.
 
-    If `total_live` is given, also emits `<access_type>_pct` columns (each set's share of
-    the live-state denominator) and a `total_live` column. The pct view is the
-    tier-relevant framing — what fraction of live state ends up Active under a given W.
+    W = objects in `_diffs` (raw — matches original analysis); R = objects in `_reads`
+    deduped against W; R∪W = W + R (disjoint).
+
+    If `total_live` is given, also emits `<set>_pct` columns (each set's share of the
+    live-state denominator) and a `total_live` column.
     """
     rows = []
     for w in sorted(hist["window_days"].unique()):
@@ -121,12 +126,9 @@ def q1_warmth(hist: pd.DataFrame, total_live: int | None = None) -> pd.DataFrame
         rw = int(slice_keys.get("rw", 0))
         rows.append({
             "window_days": int(w),
-            "W":            w_only + rw,
-            "R":            r_only + rw,
-            "RW_intersect": rw,
-            "RW_union":     w_only + r_only + rw,
-            "W_only":       w_only,
-            "R_only":       r_only,
+            "W":         w_only + rw,
+            "R":         r_only,
+            "RW_union":  w_only + r_only + rw,
         })
     out = pd.DataFrame(rows)
     if total_live is not None:
@@ -152,31 +154,33 @@ def q1_warmth_combined(slot_hist: pd.DataFrame, account_hist: pd.DataFrame,
 
 
 def q2_composition(hist: pd.DataFrame) -> pd.DataFrame:
-    """Per (slice, W, bin) the count of objects and total accesses in that bin.
+    """Per (set, W, bin) the count of objects and total accesses in that bin.
 
-    Access count for binning: the *natural* access count for the slice.
-        w_only → n_w
-        r_only → n_r
-        rw     → n_w + n_r
+    Under the 2-set additive partition:
+        set = "W" → keys with slice ∈ {w_only, rw}, access count = n_w (writes only).
+        set = "R" → keys with slice = r_only,       access count = n_r (reads only).
     """
     rows = []
-    for (slice_, w), sub in hist.groupby(["slice", "window_days"]):
-        if slice_ == "w_only":
-            counts = sub["n_w"]
-        elif slice_ == "r_only":
-            counts = sub["n_r"]
-        else:
-            counts = sub["n_w"] + sub["n_r"]
-        binned = pd.Series([_bin_label(int(c)) for c in counts], index=sub.index)
-        df = pd.DataFrame({
-            "bin": binned,
-            "n_keys": sub["n_keys"].values,
-            "n_accesses": (counts * sub["n_keys"]).values,
-        })
-        agg = df.groupby("bin", as_index=False).sum()
-        agg["slice"] = slice_
-        agg["window_days"] = int(w)
-        rows.append(agg)
+    for w in sorted(hist["window_days"].unique()):
+        sub_w = hist[hist["window_days"] == w]
+        for set_name, mask, counts_col in [
+            ("W", sub_w["slice"].isin(["w_only", "rw"]), "n_w"),
+            ("R", sub_w["slice"] == "r_only",            "n_r"),
+        ]:
+            sub = sub_w[mask]
+            if sub.empty:
+                continue
+            counts = sub[counts_col]
+            binned = pd.Series([_bin_label(int(c)) for c in counts], index=sub.index)
+            df = pd.DataFrame({
+                "bin": binned,
+                "n_keys": sub["n_keys"].values,
+                "n_accesses": (counts * sub["n_keys"]).values,
+            })
+            agg = df.groupby("bin", as_index=False).sum()
+            agg["slice"] = set_name
+            agg["window_days"] = int(w)
+            rows.append(agg)
     out = pd.concat(rows, ignore_index=True)
     return out[["window_days", "slice", "bin", "n_keys", "n_accesses"]]
 
@@ -222,18 +226,9 @@ def q3_concentration(hist: pd.DataFrame, fractions: Iterable[float] = (0.01, 0.1
 
 
 def _plot_warmth(q1: pd.DataFrame, object_type: str, total_live: int) -> go.Figure:
-    """4 lines: the 3 disjoint partition pieces + the union, plotted as % of live state.
-
-    Plot W, R, RW_intersect, RW_union too as derived quantities — but in practice |W| ≈
-    |R∩W| for both slots and accounts on every window (every written object is also read
-    in the same window), so a 6-line chart has heavy overlap. The 3-partition view is the
-    information-bearing one. Y-axis is % of live state under EIP-8188's denominator, so
-    "R∪W at W=30 = 4.2%" reads directly as "the Active tier under that policy is 4.2% of
-    state".
-    """
+    """Three additive lines on % of live state: W (writes), R (reads-not-written), R∪W."""
     fig = go.Figure()
-    primary = ["W_only", "R_only", "RW_intersect", "RW_union"]
-    for at in primary:
+    for at in ACCESS_TYPES:
         fig.add_trace(go.Scatter(
             x=q1["window_days"], y=q1[f"{at}_pct"], name=at,
             mode="lines+markers",
@@ -241,9 +236,10 @@ def _plot_warmth(q1: pd.DataFrame, object_type: str, total_live: int) -> go.Figu
         ))
     label = "live state" if object_type == "combined" else f"live {object_type}s"
     fig.update_layout(
-        title=f"Q1 — Warmth: {label} touched, by access partition and window"
-              f"<br><sub>denominator = {total_live:,}; R∪W is the warm set; "
-              f"R-only / W-only / R∩W partition it</sub>",
+        title=f"Q1 — Warmth: {label} touched, by access set and window"
+              f"<br><sub>denominator = {total_live:,}; "
+              f"W = writes (matches the original 'warm'); "
+              f"R = pure reads added on top; R∪W = full warm set</sub>",
         xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title=f"% of {label}", ticksuffix="%",
                    gridcolor="lightgray", rangemode="tozero"),
@@ -260,9 +256,9 @@ def _plot_composition(q2: pd.DataFrame, object_type: str) -> go.Figure:
     large-W end. With categories the bars are evenly spaced and readable.
     """
     bin_labels = [b[2] for b in BINS]
-    slices_in_order = ["w_only", "r_only", "rw"]
+    slices_in_order = ["W", "R"]
     fig = make_subplots(
-        rows=1, cols=3,
+        rows=1, cols=2,
         subplot_titles=[SLICE_LABEL[s] for s in slices_in_order],
         shared_yaxes=True,
     )
@@ -287,14 +283,15 @@ def _plot_composition(q2: pd.DataFrame, object_type: str) -> go.Figure:
             ), row=1, col=col)
     fig.update_layout(
         barmode="stack",
-        title=f"Q2 — Composition: per-{object_type} access-count bins, per slice and window",
-        template="plotly_white", width=1400, height=560,
+        title=f"Q2 — Composition: per-{object_type} access-count bins, by set and window"
+              f"<br><sub>W bins by write events per object; R bins by read events per object</sub>",
+        template="plotly_white", width=1200, height=560,
         legend=dict(orientation="h", x=0.5, y=-0.15, xanchor="center"),
     )
-    for c in range(1, 4):
+    for c in range(1, 3):
         fig.update_xaxes(title="W (days)", type="category", categoryorder="array",
                          categoryarray=w_categories, row=1, col=c)
-    fig.update_yaxes(title="% of slice's objects", ticksuffix="%", row=1, col=1)
+    fig.update_yaxes(title="% of set's objects", ticksuffix="%", row=1, col=1)
     return fig
 
 
@@ -350,9 +347,9 @@ def run_one(object_type: str, totals: dict[str, int]) -> None:
     q2.to_parquet(DATA_DIR_V2 / f"q2_composition_{object_type}.parquet", index=False)
     q3.to_parquet(DATA_DIR_V2 / f"q3_concentration_{object_type}.parquet", index=False)
 
-    # Verification checks.
-    diff = (q1["RW_union"] - (q1["W"] + q1["R"] - q1["RW_intersect"])).abs().max()
-    assert diff == 0, f"identity |R∪W|=|R|+|W|-|R∩W| broken by {diff}"
+    # Verification checks. Additive partition: |R∪W| = |W| + |R| (disjoint by construction).
+    diff = (q1["RW_union"] - (q1["W"] + q1["R"])).abs().max()
+    assert diff == 0, f"additive identity |R∪W|=|W|+|R| broken by {diff}"
     assert (q1["W"] >= 0).all() and (q1["R"] >= 0).all()
     assert (q1["RW_union"] <= total_live).all(), "warm set exceeds live state"
     valid = q3.dropna(subset=["top_1pct_share", "top_10pct_share"])
@@ -394,8 +391,8 @@ def run_combined(totals: dict[str, int]) -> None:
     q1c.to_parquet(DATA_DIR_V2 / "q1_warmth_combined.parquet", index=False)
 
     total_live = int(q1c["total_live"].iloc[0])
-    diff = (q1c["RW_union"] - (q1c["W"] + q1c["R"] - q1c["RW_intersect"])).abs().max()
-    assert diff == 0, f"combined identity broken by {diff}"
+    diff = (q1c["RW_union"] - (q1c["W"] + q1c["R"])).abs().max()
+    assert diff == 0, f"combined identity |R∪W|=|W|+|R| broken by {diff}"
     assert (q1c["RW_union"] <= total_live).all(), "combined warm set exceeds total state"
 
     fig = _plot_warmth(q1c, "combined", total_live)
