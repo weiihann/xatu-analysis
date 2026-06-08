@@ -78,6 +78,71 @@ ORDER BY slice, n_w, n_r
 """
 
 
+_ZERO = "0x" + "0" * 64
+
+
+def slot_typed_histogram(bn_now: int, days: int) -> str:
+    """Per-key event counts split by value-transition type, for storage slots.
+
+    Splits writes by `(from_value, to_value)` transition and reads by their returned `value`.
+
+    Write types (from `storage_diffs`):
+      - `create`: `from_value = 0`, `to_value != 0` (~20k gas, always Inactive-priced)
+      - `update`: `from_value != 0`, `to_value != 0` (~5k gas, the EIP-8188-relevant case)
+      - `delete`: `from_value != 0`, `to_value = 0` (refund)
+
+    Read types (from `storage_reads`):
+      - `r_zero`: `value = 0` (empty-slot probe — "does this exist?" checks)
+      - `r_nonzero`: `value != 0` (populated state inspection)
+
+    Returns rows of `(n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero, n_keys)`
+    per distinct count-tuple. The same per-key GROUP BY as `slot_histogram` but with five
+    typed counters instead of two — same shuffle cost, larger output cardinality.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH per_key AS (
+    SELECT
+        h,
+        sum(is_w_create) AS n_w_create,
+        sum(is_w_update) AS n_w_update,
+        sum(is_w_delete) AS n_w_delete,
+        sum(is_r_zero)   AS n_r_zero,
+        sum(is_r_nonzero) AS n_r_nonzero
+    FROM (
+        SELECT
+            cityHash64(address, slot) AS h,
+            toUInt8(from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS is_w_create,
+            toUInt8(from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS is_w_update,
+            toUInt8(from_value != '{_ZERO}' AND to_value =  '{_ZERO}') AS is_w_delete,
+            toUInt8(0) AS is_r_zero,
+            toUInt8(0) AS is_r_nonzero
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT
+            cityHash64(contract_address, slot) AS h,
+            toUInt8(0) AS is_w_create,
+            toUInt8(0) AS is_w_update,
+            toUInt8(0) AS is_w_delete,
+            toUInt8(value =  '{_ZERO}') AS is_r_zero,
+            toUInt8(value != '{_ZERO}') AS is_r_nonzero
+        FROM canonical_execution_storage_reads
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+    GROUP BY h
+)
+SELECT
+    n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero,
+    count() AS n_keys
+FROM per_key
+GROUP BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
+ORDER BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
+"""
+
+
 def account_histogram(bn_now: int, days: int) -> str:
     """(slice, n_w, n_r, n_keys) over account-address keys for the trailing W-day window.
 
