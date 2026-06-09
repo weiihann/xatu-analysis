@@ -288,6 +288,68 @@ R_mixed is omitted (always zero — see above). Stacked total = R.
 
 ![Q1 typed — slot R partition](data/v2/q1_warmth_slot_R_typed.png)
 
+### Decomposing W_mixed — what's actually in the "≥2 types" bucket?
+
+W_mixed at W=365d is **6.74% of state** (~27% of |W|), so it earns its own decomposition.
+Structurally, slots in W_mixed must carry ≥2 of `{create, update, delete}`. Combining
+these into the 6 possible patterns and sub-binning the multi-cycle-capable ones by
+create-count:
+
+| combo | structural rule | count constraint |
+|---|---|---|
+| `C+U` | no delete | `n_C = 1` always (multiple creates need deletes between them) |
+| `C+D (1-cycle)` | no update; `n_C = 1` | born once, died once — single ephemeral lifecycle |
+| `C+D (multi-cycle)` | no update; `n_C ≥ 2` | repeated birth/death cycles, no modification |
+| `U+D` | no create; `n_D = 1` always | k updates then one terminal delete (existed pre-window) |
+| `C+U+D (1-cycle)` | all three; `n_C = 1` | full single lifecycle (born, modified, died) |
+| `C+U+D (multi-cycle)` | all three; `n_C ≥ 2` | full lifecycle, repeated |
+
+Composition of W_mixed at each W (% of W_mixed; rows sum to 100%):
+
+| W (days) | C+U | C+D (1-cycle) | C+D (multi) | U+D | C+U+D (1-cycle) | C+U+D (multi) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1   | 20.45% | 52.98% | 8.04% | 5.71% | 7.18% | 5.64% |
+| 7   | 20.64% | 55.74% | 8.10% | 3.47% | 6.16% | 5.88% |
+| 14  | 21.50% | 54.85% | 8.30% | 3.13% | 6.20% | 6.03% |
+| 30  | 24.59% | 51.02% | 9.41% | 2.29% | 5.98% | 6.71% |
+| 60  | 27.26% | 49.35% | 9.86% | 1.55% | 5.72% | 6.26% |
+| 90  | 32.11% | 45.26% | 9.08% | 1.36% | 5.87% | 6.31% |
+| 180 | 33.02% | 44.37% | 8.56% | 1.49% | 5.90% | 6.66% |
+| 365 | 35.62% | 42.42% | 7.84% | 1.35% | 6.36% | 6.42% |
+
+Absolute share of live state (W_mixed sub-categories, % of state):
+
+| W (days) | C+U | C+D (1-cycle) | C+D (multi) | U+D | C+U+D (1-cycle) | C+U+D (multi) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1   | 0.0032% | 0.0082% | 0.0013% | 0.0009% | 0.0011% | 0.0009% |
+| 30  | 0.1357% | 0.2816% | 0.0520% | 0.0126% | 0.0330% | 0.0370% |
+| 90  | 0.6078% | 0.8568% | 0.1719% | 0.0258% | 0.1112% | 0.1194% |
+| 365 | 2.4016% | 2.8603% | 0.5287% | 0.0908% | 0.4285% | 0.4326% |
+
+![W_mixed decomposition](data/v2/q1_warmth_slot_mixed_decomp.png)
+
+Three things worth reading off:
+
+1. **C+D (1-cycle) is the largest mixed category at almost every W** — 42–56%. These
+   are slots **born and died in the same window with exactly one create and one delete**.
+   Ephemeral state — probably temporary mapping entries, intermediate compute slots, or
+   "pending" markers that get cleaned up after consumption. At W=365d this single
+   category accounts for **2.86% of live state**, the largest piece of W_mixed.
+2. **C+U grows steadily with W** (20% at W=1d → 35.6% at W=365d). These are slots
+   created in window then modified at least once but not deleted — the "fresh hot
+   storage" pattern. Their share rises with W because they accumulate updates over time
+   without dying.
+3. **U+D shrinks as W grows** (5.7% at W=1d → 1.4% at W=365d). At small W the
+   "modified-then-died" pattern is more visible because long lifecycle histories haven't
+   completed yet; at large W most pre-existing slots that die also get recreated
+   somewhere along the way (moving them to C+U+D), and many that don't die stay in
+   W_only_update.
+
+**Multi-cycle is a stable minority.** C+D multi-cycle and C+U+D multi-cycle each sit
+around 6–10% of W_mixed at every W. Combined ~14%. So the "slot churns through multiple
+birth-death cycles in window" pattern is real but small — most mixed slots have a single
+lifecycle within window.
+
 ## 4c. Warm-update coverage under EIP-8188 semantics (per-event)
 
 The set-membership view in §4 / §4b is informative but it can't directly answer **"of the
@@ -775,10 +837,12 @@ state_access/data/v2/
   slot_update_coverage.parquet   # per-W warm/cold update split for §4c
   q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
   q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
+  q1_warmth_slot_mixed_decomp.parquet                # W_mixed sub-categories
   q2_composition_{slot,account}.parquet
   q3_concentration_{slot,account}.parquet
   q1_warmth_{slot,account,combined}.png
   q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
+  q1_warmth_slot_mixed_decomp.png                    # W_mixed 6-way decomposition
   slot_update_coverage.png                            # §4c warm/cold update line chart
   q2_composition_{slot,account}.png
   q3_concentration_{top1,top10}_{slot,account}.png

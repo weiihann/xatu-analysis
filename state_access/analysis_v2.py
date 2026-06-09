@@ -454,6 +454,111 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
     return fig
 
 
+_MIXED_COMBOS_ORDER = [
+    "C+U", "C+D (1-cycle)", "C+D (multi-cycle)", "U+D",
+    "C+U+D (1-cycle)", "C+U+D (multi-cycle)",
+]
+_MIXED_COMBOS_COLORS = {
+    "C+U":                 "#1565C0",
+    "C+D (1-cycle)":       "#FFA000",
+    "C+D (multi-cycle)":   "#E65100",
+    "U+D":                 "#7B1FA2",
+    "C+U+D (1-cycle)":     "#388E3C",
+    "C+U+D (multi-cycle)": "#1B5E20",
+}
+
+
+def _classify_mixed(row: pd.Series) -> str | None:
+    """Sub-bin a typed-histogram row into one of the 6 W_mixed combos, or None if not mixed.
+
+    Mixed = ≥2 of `{create, update, delete}` event types present in window. The structural
+    rules (you can't have two creates without a delete between them; you can't update a
+    deleted-then-zero slot) mean only `{C, D}` and `{C, U, D}` can carry multi-cycle
+    structure; `{C, U}` always has exactly 1 create and `{U, D}` always has exactly 1
+    delete.
+    """
+    has_c = row["n_w_create"] > 0
+    has_u = row["n_w_update"] > 0
+    has_d = row["n_w_delete"] > 0
+    n_types = int(has_c) + int(has_u) + int(has_d)
+    if n_types < 2:
+        return None
+    if has_c and has_u and not has_d:
+        return "C+U"
+    if has_u and has_d and not has_c:
+        return "U+D"
+    if has_c and has_d and not has_u:
+        return "C+D (1-cycle)" if row["n_w_create"] == 1 else "C+D (multi-cycle)"
+    return "C+U+D (1-cycle)" if row["n_w_create"] == 1 else "C+U+D (multi-cycle)"
+
+
+def q1_warmth_slot_mixed_decomp(typed_hist: pd.DataFrame, total_live: int) -> pd.DataFrame:
+    """Per-window decomposition of slot W_mixed into 6 sub-categories.
+
+    Returns one row per (window_days, combo) with both share-of-mixed and share-of-state.
+    """
+    typed = typed_hist.copy()
+    typed["combo"] = typed.apply(_classify_mixed, axis=1)
+    mixed = typed[typed["combo"].notna()]
+    agg = mixed.groupby(["window_days", "combo"], as_index=False)["n_keys"].sum()
+    mixed_per_w = mixed.groupby("window_days")["n_keys"].sum()
+    agg["share_of_mixed"] = agg.apply(
+        lambda r: 100 * r["n_keys"] / mixed_per_w.get(r["window_days"], 1), axis=1)
+    agg["share_of_state"] = 100 * agg["n_keys"] / int(total_live)
+    return agg.sort_values(["window_days", "combo"]).reset_index(drop=True)
+
+
+def _plot_slot_mixed_decomp(decomp: pd.DataFrame) -> go.Figure:
+    """Stacked area: x=W, stacks=6 combos, y=% of W_mixed."""
+    fig = go.Figure()
+    pivot = decomp.pivot(index="window_days", columns="combo",
+                         values="share_of_mixed").fillna(0)
+    pivot = pivot.reindex(columns=_MIXED_COMBOS_ORDER, fill_value=0)
+    for combo in _MIXED_COMBOS_ORDER:
+        fig.add_trace(go.Scatter(
+            x=pivot.index, y=pivot[combo], name=combo,
+            mode="lines", stackgroup="one",
+            line=dict(color=_MIXED_COMBOS_COLORS[combo], width=0.5),
+            fillcolor=_MIXED_COMBOS_COLORS[combo],
+        ))
+    fig.update_layout(
+        title="Slot W_mixed decomposition — composition of slots with ≥2 write types"
+              "<br><sub>stacks sum to 100% of W_mixed at each W; "
+              "C+D (1-cycle) = born and died once in window (ephemeral state)</sub>",
+        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        yaxis=dict(title="% of W_mixed", ticksuffix="%",
+                   gridcolor="lightgray", range=[0, 100]),
+        template="plotly_white", width=1100, height=580,
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
+    )
+    return fig
+
+
+def run_slot_mixed_decomp(totals: dict[str, int]) -> None:
+    """Decompose W_mixed and render the stacked-area chart."""
+    p = DATA_DIR_V2 / "slot_typed_histogram.parquet"
+    if not p.exists():
+        print(f"  no typed-slot histogram at {p}; skipping mixed decomposition")
+        return
+    typed = pd.read_parquet(p)
+    decomp = q1_warmth_slot_mixed_decomp(typed, int(totals["storages"]))
+    decomp.to_parquet(DATA_DIR_V2 / "q1_warmth_slot_mixed_decomp.parquet", index=False)
+
+    # Verification: shares-of-mixed sum to ~100 per window.
+    sums = decomp.groupby("window_days")["share_of_mixed"].sum()
+    assert (sums.between(99.99, 100.01)).all(), f"mixed decomp shares don't sum to 100: {sums}"
+
+    fig = _plot_slot_mixed_decomp(decomp)
+    fig.write_image(DATA_DIR_V2 / "q1_warmth_slot_mixed_decomp.png", scale=2)
+    _show(fig)
+
+    print(f"\n>>> W_mixed decomposition (share of W_mixed per W):")
+    pivot = decomp.pivot(index="window_days", columns="combo",
+                        values="share_of_mixed").fillna(0).reindex(
+                            columns=_MIXED_COMBOS_ORDER, fill_value=0)
+    print(pivot.round(2).to_string())
+
+
 def run_slot_update_coverage() -> None:
     """Plot the per-W warm/cold update split persisted by `collect_v2` (or the smoke run)."""
     p = DATA_DIR_V2 / "slot_update_coverage.parquet"
@@ -617,6 +722,7 @@ def main() -> None:
     print("\n>>> combined")
     run_combined(totals)
     run_slot_typed(totals)
+    run_slot_mixed_decomp(totals)
     run_slot_update_coverage()
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
