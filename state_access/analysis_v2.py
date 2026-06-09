@@ -534,6 +534,111 @@ def _plot_slot_mixed_decomp(decomp: pd.DataFrame) -> go.Figure:
     return fig
 
 
+_TYPED_Q2_SPECS = [
+    ("W_create",  "n_w_create",  "W — creates"),
+    ("W_update",  "n_w_update",  "W — updates"),
+    ("W_delete",  "n_w_delete",  "W — deletes"),
+    ("R_zero",    "n_r_zero",    "R — zero reads"),
+    ("R_nonzero", "n_r_nonzero", "R — nonzero reads"),
+]
+
+
+def q2_composition_slot_typed(typed_hist: pd.DataFrame) -> pd.DataFrame:
+    """Per-(W, type, bin) the count of slots and total events in that bin.
+
+    For each transition/read type, the "set" is slots with any event of that type in
+    window (overlapping across types — a slot can have both creates and updates). The
+    per-slot access count is the corresponding `n_w_*` / `n_r_*` column, binned by the
+    standard `BINS`.
+    """
+    rows = []
+    for w in sorted(typed_hist["window_days"].unique()):
+        sub_w = typed_hist[typed_hist["window_days"] == w]
+        for type_name, count_col, _ in _TYPED_Q2_SPECS:
+            sub = sub_w[sub_w[count_col] > 0]
+            if sub.empty:
+                continue
+            counts = sub[count_col]
+            binned = pd.Series([_bin_label(int(c)) for c in counts], index=sub.index)
+            df = pd.DataFrame({
+                "bin": binned,
+                "n_keys": sub["n_keys"].values,
+                "n_accesses": (counts * sub["n_keys"]).values,
+            })
+            agg = df.groupby("bin", as_index=False).sum()
+            agg["type"] = type_name
+            agg["window_days"] = int(w)
+            rows.append(agg)
+    out = pd.concat(rows, ignore_index=True)
+    return out[["window_days", "type", "bin", "n_keys", "n_accesses"]]
+
+
+def _plot_q2_slot_typed(q2t: pd.DataFrame) -> go.Figure:
+    """5-panel stacked bar: one panel per transition/read type, x=W (categorical), y=share."""
+    bin_labels = [b[2] for b in BINS]
+    types_ordered = [t for t, _, _ in _TYPED_Q2_SPECS]
+    panel_titles = [label for _, _, label in _TYPED_Q2_SPECS]
+    fig = make_subplots(
+        rows=1, cols=5, subplot_titles=panel_titles, shared_yaxes=True,
+        horizontal_spacing=0.025,
+    )
+    w_categories = [str(w) for w in sorted(q2t["window_days"].unique())]
+    for col, t in enumerate(types_ordered, start=1):
+        sub = q2t[q2t["type"] == t].copy()
+        if sub.empty:
+            continue
+        type_totals = sub.groupby("window_days")["n_keys"].sum()
+        sub["share"] = sub.apply(
+            lambda r: 100 * r["n_keys"] / type_totals.get(r["window_days"], 1), axis=1)
+        pivot = sub.pivot(index="window_days", columns="bin", values="share").fillna(0)
+        pivot = pivot.reindex(columns=bin_labels, fill_value=0)
+        x_cat = [str(w) for w in pivot.index]
+        for i, bin_label in enumerate(bin_labels):
+            fig.add_trace(go.Bar(
+                x=x_cat, y=pivot[bin_label],
+                name=bin_label, legendgroup=bin_label,
+                showlegend=(col == 1),
+                marker=dict(color=BIN_COLORS[i]),
+            ), row=1, col=col)
+    fig.update_layout(
+        barmode="stack",
+        title="Q2 typed — per-slot event-count bins by transition/read type"
+              "<br><sub>each panel: slots with any event of that type; access count = "
+              "events of that type per slot</sub>",
+        template="plotly_white", width=1800, height=560,
+        legend=dict(orientation="h", x=0.5, y=-0.18, xanchor="center"),
+    )
+    for c in range(1, 6):
+        fig.update_xaxes(title="W (days)", type="category", categoryorder="array",
+                         categoryarray=w_categories, row=1, col=c)
+    fig.update_yaxes(title="% of type's slots", ticksuffix="%", row=1, col=1)
+    return fig
+
+
+def run_slot_q2_typed(_totals: dict[str, int]) -> None:
+    """Compute the typed Q2 composition and render the 5-panel chart."""
+    p = DATA_DIR_V2 / "slot_typed_histogram.parquet"
+    if not p.exists():
+        return
+    typed = pd.read_parquet(p)
+    q2t = q2_composition_slot_typed(typed)
+    q2t.to_parquet(DATA_DIR_V2 / "q2_composition_slot_typed.parquet", index=False)
+
+    # Verification: per (W, type), bin shares sum to ~100.
+    grp = q2t.groupby(["window_days", "type"])["n_keys"].sum().reset_index()
+    grp_with_share = q2t.merge(grp.rename(columns={"n_keys": "total"}),
+                                on=["window_days", "type"])
+    grp_with_share["share"] = 100 * grp_with_share["n_keys"] / grp_with_share["total"]
+    sums = grp_with_share.groupby(["window_days", "type"])["share"].sum()
+    assert (sums.between(99.99, 100.01)).all(), f"Q2 typed shares don't sum to 100: {sums.describe()}"
+
+    fig = _plot_q2_slot_typed(q2t)
+    fig.write_image(DATA_DIR_V2 / "q2_composition_slot_typed.png", scale=2)
+    _show(fig)
+    print(f"\n>>> Q2 typed composition (slots): {len(q2t)} rows across "
+          f"{q2t['window_days'].nunique()} windows × {q2t['type'].nunique()} types")
+
+
 def run_slot_mixed_decomp(totals: dict[str, int]) -> None:
     """Decompose W_mixed and render the stacked-area chart."""
     p = DATA_DIR_V2 / "slot_typed_histogram.parquet"
@@ -723,6 +828,7 @@ def main() -> None:
     run_combined(totals)
     run_slot_typed(totals)
     run_slot_mixed_decomp(totals)
+    run_slot_q2_typed(totals)
     run_slot_update_coverage()
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
