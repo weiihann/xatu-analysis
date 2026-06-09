@@ -493,6 +493,62 @@ bin: these are popular contracts being called many times by other contracts but 
 modified themselves (proxies, routers, factories, oracles). The singly-touched bin for
 R-only accounts is <2% — almost nothing is read just once.
 
+### 5b. Slot Q2 — typed (composition by write transition / read returned value)
+
+The W/R composition above pools across transition types. Splitting W into
+`create / update / delete` and R into `zero / nonzero` reveals very different
+per-slot event-count shapes per type. Each panel below is its own population:
+"% of slots that have any event of this type, distributed by how many events of that
+type happened per slot". Populations overlap (one slot can appear in W_create
+and W_update).
+
+![Q2 typed — slots](data/v2/q2_composition_slot_typed.png)
+
+**Selected numbers** (% of each type's slot population, by event-count bin):
+
+W=30d:
+
+| type | 1 | 2-5 | 6-50 | 51-500 | 500+ |
+|---|---:|---:|---:|---:|---:|
+| W — creates    | **96.1%** | 3.3% | 0.6% | 0.0% | 0.0% |
+| W — updates    | 72.0% | 18.3% | 8.1% | 1.4% | 0.2% |
+| W — deletes    | 87.4% | 10.4% | 2.2% | 0.1% | 0.0% |
+| R — zero reads | **87.3%** | 10.3% | 2.2% | 0.2% | 0.0% |
+| R — nonzero reads | 72.7% | 18.6% | 7.2% | 1.2% | 0.3% |
+
+W=365d:
+
+| type | 1 | 2-5 | 6-50 | 51-500 | 500+ |
+|---|---:|---:|---:|---:|---:|
+| W — creates    | **95.5%** | 3.8% | 0.7% | 0.0% | 0.0% |
+| W — updates    | 68.4% | 21.6% | 8.5% | 1.3% | 0.2% |
+| W — deletes    | 84.2% | 12.7% | 2.9% | 0.2% | 0.0% |
+| R — zero reads | **88.4%** | 9.3% | 2.0% | 0.2% | 0.0% |
+| R — nonzero reads | 70.9% | 20.8% | 7.0% | 1.1% | 0.2% |
+
+Three distinct patterns:
+
+1. **Creates and zero-reads are overwhelmingly singletons (84–96% in bin 1).** A slot
+   that gets created in window almost always gets created exactly once — the structural
+   constraint we noted in §4b (multiple creates need deletes between them) bounds the
+   tail at C+D-multi-cycle slots, which we now see are a tiny minority. Same for zero
+   reads: an empty-slot probe is almost always a one-shot lookup.
+2. **Deletes are mostly singletons (84–91% in bin 1), but with a slightly heavier 2-5
+   tail than creates.** This 2-5 / 6-50 tail is the C+D multi-cycle and C+U+D
+   multi-cycle slots we identified in §4b — repeated death events. The tail thickens
+   slightly with W, consistent with the multi-cycle categories growing as W lengthens.
+3. **Updates and nonzero-reads are the only types with meaningful repetition** —
+   ~70% singletons, ~20% in 2–5, ~7–9% in 6–50, with a small but real heavy tail
+   (~1–2% in 51-500, ~0.2% in 500+). The "head" of active state lives here — the slots
+   that get rewritten or inspected many times. Shape is remarkably stable across W
+   (Zipfian / power-law signature, same as the §5 view of pooled R).
+
+The asymmetry between creates and updates is the operational story: **state grows
+mostly by one-off slot creations, but the slots that survive long enough to be
+modified accumulate many updates each**. The same shape transfers to reads — most
+slot reads are one-shot empty-slot checks, but populated reads of "real" state
+concentrate on a small set of frequently-inspected slots.
+
 ## 6. Q3 — Concentration (top-N share of accesses)
 
 For each `(access_set, W, object_type)`, the share of access events captured by the
@@ -838,11 +894,13 @@ state_access/data/v2/
   q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
   q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
   q1_warmth_slot_mixed_decomp.parquet                # W_mixed sub-categories
+  q2_composition_slot_typed.parquet                  # §5b typed Q2 (5 types × bins)
   q2_composition_{slot,account}.parquet
   q3_concentration_{slot,account}.parquet
   q1_warmth_{slot,account,combined}.png
   q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
   q1_warmth_slot_mixed_decomp.png                    # W_mixed 6-way decomposition
+  q2_composition_slot_typed.png                      # §5b typed Q2 (5-panel)
   slot_update_coverage.png                            # §4c warm/cold update line chart
   q2_composition_{slot,account}.png
   q3_concentration_{top1,top10}_{slot,account}.png
