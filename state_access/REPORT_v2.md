@@ -419,6 +419,129 @@ Three readings:
    per-slot, not per-event; a slot has at most one cold-update event in window
    (the first warming).
 
+## 4d. First-operation classification (read-side period-bump policy)
+
+The §4 view treats W and R as set-membership; §4c treats updates as events. There's a
+third question worth asking specifically about the **first operation per object** in
+window:
+
+> Under a hypothetical extension of EIP-8188 where the first read of an inactive object
+> also bumps its period — making reads write-like for users — which objects pay that cost?
+
+The bad-UX set is **objects whose first in-window event is a nonzero read**:
+
+- For a slot, "nonzero read" means SLOAD returning a populated value (zero reads don't
+  bump anything because the slot has no period at value=0).
+- For an account, "nonzero read" means `balance_reads` returning balance > 0 or
+  `nonce_reads` returning nonce > 0 (empty accounts don't have a period either).
+
+A write or a zero read as the first event has no policy cost: writes already bump the
+period under base EIP-8188, and zero reads target objects that don't exist yet.
+
+### Method
+
+Per object, pick the event with the smallest `(block_number, transaction_index)` in
+window and classify it. `internal_index` is a per-table index (per `_diffs` or
+per-`_reads`), not a cross-table opcode order, so we can't use it to break ties between
+a read and a write in the same transaction — we adopt a deterministic convention: at
+the same `(block, tx_idx)`, **writes > nonzero reads > zero reads > appearance reads**.
+This under-counts the policy-bad set (a read that actually preceded a write in the same
+tx gets classified as "first = write"), but it's the safer error to make.
+
+`canonical_execution_contracts` and `canonical_execution_address_appearances` don't have
+a `transaction_index` column — we look it up from `canonical_execution_transaction` by
+`transaction_hash` (via a `GLOBAL INNER JOIN`). For this to be accurate the local
+`canonical_execution_transaction` had to be backfilled from ethpandaops for blocks
+`[23,001,000, 25,189,620]`; pre-23M coverage was already complete on local.
+
+### Slots — first-operation classification
+
+For each W, the share of slots in R∪W by what their first event is:
+
+| W (days) | first = write | first = zero read | first = nonzero read |
+|---:|---:|---:|---:|
+| 1   | 58.26% | 27.97% | **13.77%** |
+| 7   | 62.74% | 28.97% |  8.29% |
+| 14  | 67.57% | 25.66% |  6.78% |
+| 30  | 68.54% | 25.91% |  5.56% |
+| 60  | 69.72% | 26.34% |  3.94% |
+| 90  | 69.42% | 27.02% |  3.55% |
+| 180 | 71.05% | 26.22% |  2.73% |
+
+![Slot first-op classification](data/v2/slot_first_op.png)
+
+**Reading.** At W=30d, **5.56% of slots in R∪W** (≈ 3.6M slots) would be hit by the
+hypothetical read-side period bump — their first in-window event is an SLOAD returning a
+populated value. By W=180d this drops to 2.73%, and the long-run asymptote is small
+because as W grows, the chance that an object has *some* write earlier in the same
+window also grows.
+
+The 26–28% **zero-read** band is large but policy-irrelevant under this framing — those
+are first-time SLOADs on slots that have no period to bump. They're just structural
+"slot didn't exist" probes.
+
+### Accounts — first-operation classification
+
+Account data is currently complete through W=60d. W=90d and W=180d hit the local
+cluster's memory limit during the GLOBAL JOIN (the query is recoverable; re-run after
+cluster maintenance closes those rows). The pattern through W=60d is already clear.
+
+| W (days) | first = write | first = nonzero read | first = zero read |
+|---:|---:|---:|---:|
+| 1   | 83.91% | **15.75%** | 0.34% |
+| 7   | 87.51% | 11.97% | 0.52% |
+| 14  | 86.94% | 12.50% | 0.56% |
+| 30  | 89.11% | 10.35% | 0.54% |
+| 60  | 90.94% |  8.48% | 0.58% |
+
+(`first = appearance read` is identically 0 — appearance reads always lose the
+tie-break to balance/nonce reads when present at the same `(block, tx_idx)`, because the
+same tx that emits an appearance also emits balance and nonce reads on the same
+account.)
+
+![Account first-op classification](data/v2/account_first_op.png)
+
+**Reading.** The policy-bad set is even more pronounced for accounts at small W:
+**15.75% of warm accounts at W=1d** have a nonzero balance/nonce read as their first
+event. By W=60d this drops to 8.48% — still ~2.7M accounts per W=60d window. Most of
+these are likely "view-call targets" — popular contracts being called read-only via
+balance/nonce checks before a tx decides whether to interact.
+
+Zero reads on accounts (balance=0 AND nonce read returns 0) are a tiny share — almost
+every account that gets read at all is non-empty. This sets up §4d.2.
+
+### R-only accounts — empty vs non-empty
+
+Within the R set (accounts in `_reads` with NO write in window), the balance and nonce
+values are stable through window (no writes ⇒ no value changes). So we can classify each
+R-only account once:
+
+- **empty**: `max(balance) = 0 AND max(nonce) = 0` from `balance_reads` and
+  `nonce_reads` in window.
+- **non-empty**: `max(balance) > 0 OR max(nonce) > 0`.
+- **unknown**: no `balance_reads` or `nonce_reads` in window for this account — only
+  observed via `address_appearances`. No value-level data to classify.
+
+Smoke-test numbers (W=1d, 7d only — the full sweep didn't complete; the cluster crashed
+under the LEFT JOIN with two `(balance_reads + nonce_reads)` aggregates):
+
+| W (days) | R-only total | empty | non-empty | unknown |
+|---:|---:|---:|---:|---:|
+| 1   |  135,922 | 1.79% | **98.21%** | 0.00% |
+| 7   |  586,826 | 3.71% | **96.29%** | 0.00% |
+
+**Almost every R-only account is non-empty.** ~98% at W=1d, ~96% at W=7d. So under
+read-side EIP-8188, virtually all R-only account reads would bump a real period —
+converting reads into writes from the user's perspective. The empty-account "free pass"
+is structurally tiny.
+
+This is the policy-relevant complement to §4d's first-op analysis: even for accounts
+that aren't first-event reads, the *pure* R-only slice (where any read at all bumps a
+period) is dominated by non-empty objects.
+
+(The empty-split sweep for W=14d+ and the account first-op for W=90d/180d are pending —
+re-run `state_access/_sweep_accounts_resume.py` when the cluster is back up.)
+
 ## 5. Q3 — Concentration (top-N share of accesses)
 
 For each `(access_set, W, object_type)`, the share of access events captured by the
@@ -703,6 +826,112 @@ FROM per_slot
 monotone UInt64. Block numbers fit easily — `25M × 1e9 ≈ 2.5e16`, well below UInt64
 max.
 
+### First-operation classification (§4d)
+
+For each object in R∪W, find its earliest event in window by `(block_number,
+transaction_index)` and classify. Slots use the same UNION-ALL-then-`argMin` shape as
+`slot_update_coverage`; accounts add a `GLOBAL INNER JOIN` against
+`canonical_execution_transaction` to recover `transaction_index` for `contracts` and
+`address_appearances` (which lack the column).
+
+```sql
+-- Slots — slot_first_op
+WITH slot_events AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
+        toUInt8(0) AS is_read,
+        toUInt8(0) AS read_is_nonzero
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(contract_address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 1 AS event_order,
+        toUInt8(1) AS is_read,
+        toUInt8(value != '0x000…0') AS read_is_nonzero
+    FROM canonical_execution_storage_reads
+    WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+per_slot AS (
+    SELECT
+        h,
+        argMin(is_read,         event_order) AS first_is_read,
+        argMin(read_is_nonzero, event_order) AS first_read_is_nonzero
+    FROM slot_events
+    GROUP BY h
+)
+SELECT
+    count() AS total_slots,
+    sum(toUInt8(first_is_read = 0)) AS first_is_write,
+    sum(toUInt8(first_is_read = 1 AND first_read_is_nonzero = 0)) AS first_is_zero_read,
+    sum(toUInt8(first_is_read = 1 AND first_read_is_nonzero = 1)) AS first_is_nonzero_read
+FROM per_slot;
+
+-- Accounts — account_first_op (priority packing into event_order so tie-break is
+-- write > nonzero_read > zero_read > appearance_read at same (block, tx_idx))
+WITH tx_idx_lookup AS (
+    SELECT transaction_hash, toUInt64(transaction_index) AS tx_idx
+    FROM canonical_execution_transaction
+    WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+all_events AS (
+    SELECT cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
+        'write' AS op
+    FROM canonical_execution_balance_diffs
+    WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL ...  -- (5 more sources: nonce_diffs, contracts via JOIN, balance_reads
+                   --  with priority +1/+2 by balance!=0, nonce_reads similarly,
+                   --  address_appearances via JOIN with priority +3)
+)
+SELECT count() AS total_accounts,
+       sum(toUInt8(op='write'))           AS first_is_write,
+       sum(toUInt8(op='nonzero_read'))    AS first_is_nonzero_read,
+       sum(toUInt8(op='zero_read'))       AS first_is_zero_read,
+       sum(toUInt8(op='appearance_read')) AS first_is_appearance_read
+FROM (SELECT h, argMin(op, event_order) AS op FROM all_events GROUP BY h);
+```
+
+Full SQL in `state_access/queries_v2.py` (`slot_first_op`, `account_first_op`).
+
+### R-only empty/non-empty split (§4d.2)
+
+```sql
+WITH r_set AS (
+    -- accounts in any read source but NOT in any write source
+    SELECT cityHash64(address) AS h
+    FROM (
+        SELECT address FROM canonical_execution_balance_reads WHERE in_window
+        UNION ALL
+        SELECT address FROM canonical_execution_nonce_reads   WHERE in_window
+        UNION ALL
+        SELECT address FROM canonical_execution_address_appearances
+        WHERE in_window AND relationship IN (...)
+    ) GROUP BY address
+    HAVING h NOT IN (writes union for the same window)
+),
+balance_values AS (
+    SELECT cityHash64(address) AS h, max(toUInt256(balance)) AS max_balance
+    FROM canonical_execution_balance_reads WHERE in_window
+    GROUP BY h
+),
+nonce_values AS (
+    SELECT cityHash64(address) AS h, max(nonce) AS max_nonce
+    FROM canonical_execution_nonce_reads WHERE in_window
+    GROUP BY h
+)
+SELECT
+    count() AS total_r,
+    countIf(coalesce(max_balance, toUInt256(0)) = 0 AND coalesce(max_nonce, 0) = 0
+            AND (max_balance IS NOT NULL OR max_nonce IS NOT NULL)) AS empty_accounts,
+    countIf(coalesce(max_balance, toUInt256(0)) > 0 OR coalesce(max_nonce, 0) > 0) AS nonempty_accounts,
+    countIf(max_balance IS NULL AND max_nonce IS NULL) AS unknown_accounts
+FROM r_set
+LEFT JOIN balance_values USING h
+LEFT JOIN nonce_values   USING h;
+```
+
 ### Cross-validation against the original analysis
 
 To confirm v2's W matches the original's "warm" definition at W=30d:
@@ -726,6 +955,9 @@ state_access/data/v2/
   account_histogram.parquet
   slot_typed_histogram.parquet   # typed slot histogram for §4b
   slot_update_coverage.parquet   # per-W warm/cold update split for §4c
+  slot_first_op.parquet           # §4d first-op classification (slots)
+  account_first_op.parquet        # §4d first-op classification (accounts)
+  account_r_empty_split.parquet   # §4d empty/non-empty R-only accounts
   q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
   q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
   q1_warmth_slot_mixed_decomp.parquet                # W_mixed sub-categories
@@ -734,6 +966,9 @@ state_access/data/v2/
   q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
   q1_warmth_slot_mixed_decomp.png                    # W_mixed 6-way decomposition
   slot_update_coverage.png                           # §4c warm/cold update line chart
+  slot_first_op.png                                  # §4d slot first-op stacked bar
+  account_first_op.png                               # §4d account first-op stacked bar
+  account_r_empty_split.png                          # §4d R-only empty vs non-empty
   q3_concentration_{top1,top10}_{slot,account}.png
 ```
 

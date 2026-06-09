@@ -470,6 +470,115 @@ def run_slot_mixed_decomp(totals: dict[str, int]) -> None:
     print(pivot.round(2).to_string())
 
 
+def run_slot_first_op() -> None:
+    """Plot the per-W first-operation classification for slots (§4d)."""
+    p = DATA_DIR_V2 / "slot_first_op.parquet"
+    if not p.exists():
+        print(f"  no slot_first_op parquet at {p}; sweep first")
+        return
+    df = pd.read_parquet(p).sort_values("window_days").reset_index(drop=True)
+    df["pct_write"]        = 100 * df["first_is_write"]        / df["total_slots"]
+    df["pct_zero_read"]    = 100 * df["first_is_zero_read"]    / df["total_slots"]
+    df["pct_nonzero_read"] = 100 * df["first_is_nonzero_read"] / df["total_slots"]
+    print(f"\n>>> slot_first_op: {len(df)} windows")
+
+    x_cat = [str(w) for w in df["window_days"]]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_write"], name="first = write",
+                         marker=dict(color="#1565C0")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_zero_read"], name="first = zero read",
+                         marker=dict(color="#90CAF9")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_nonzero_read"], name="first = nonzero read",
+                         marker=dict(color="#C2185B")))
+    fig.update_layout(
+        barmode="stack",
+        title="Slot first-operation classification — policy-bad set is the nonzero-read piece"
+              "<br><sub>under hypothetical EIP-8188 read-side period bumping, only nonzero "
+              "reads would convert from no-op into a period-bumping operation</sub>",
+        xaxis=dict(title="window W (days)", type="category"),
+        yaxis=dict(title="% of slots in R∪W", ticksuffix="%", range=[0, 100],
+                   gridcolor="lightgray"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=0.99, y=0.5, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
+    )
+    fig.write_image(DATA_DIR_V2 / "slot_first_op.png", scale=2)
+    _show(fig)
+
+
+def run_account_first_op() -> None:
+    """Plot the per-W first-operation classification for accounts (§4d)."""
+    p = DATA_DIR_V2 / "account_first_op.parquet"
+    if not p.exists():
+        print(f"  no account_first_op parquet at {p}; sweep first")
+        return
+    df = pd.read_parquet(p).sort_values("window_days").reset_index(drop=True)
+    for col in ("first_is_write", "first_is_nonzero_read", "first_is_zero_read",
+                "first_is_appearance_read"):
+        # Strip the "first_" prefix to keep the column name a sensible pct label.
+        df[f"pct_{col.removeprefix('first_')}"] = 100 * df[col] / df["total_accounts"]
+    print(f"\n>>> account_first_op: {len(df)} windows")
+
+    x_cat = [str(w) for w in df["window_days"]]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_is_write"], name="first = write",
+                         marker=dict(color="#1565C0")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_is_zero_read"], name="first = zero read",
+                         marker=dict(color="#90CAF9")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_is_nonzero_read"], name="first = nonzero read",
+                         marker=dict(color="#C2185B")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_is_appearance_read"],
+                         name="first = appearance read (value unknown)",
+                         marker=dict(color="#9E9E9E")))
+    fig.update_layout(
+        barmode="stack",
+        title="Account first-operation classification"
+              "<br><sub>tie-break at same (block, tx_idx): writes > nonzero reads > zero "
+              "reads > appearance reads</sub>",
+        xaxis=dict(title="window W (days)", type="category"),
+        yaxis=dict(title="% of accounts in R∪W", ticksuffix="%", range=[0, 100],
+                   gridcolor="lightgray"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=0.99, y=0.5, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
+    )
+    fig.write_image(DATA_DIR_V2 / "account_first_op.png", scale=2)
+    _show(fig)
+
+
+def run_account_r_empty_split() -> None:
+    """Plot the per-W empty vs non-empty split of R-only accounts (§4d)."""
+    p = DATA_DIR_V2 / "account_r_empty_split.parquet"
+    if not p.exists():
+        print(f"  no account_r_empty_split parquet at {p}; sweep first")
+        return
+    df = pd.read_parquet(p).sort_values("window_days").reset_index(drop=True)
+    df["pct_empty"]    = 100 * df["empty_accounts"]    / df["total_r"]
+    df["pct_nonempty"] = 100 * df["nonempty_accounts"] / df["total_r"]
+    df["pct_unknown"]  = 100 * df["unknown_accounts"]  / df["total_r"]
+    print(f"\n>>> account_r_empty_split: {len(df)} windows")
+
+    x_cat = [str(w) for w in df["window_days"]]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_nonempty"], name="non-empty (balance>0 or nonce>0)",
+                         marker=dict(color="#C2185B")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_empty"], name="empty (balance=0 and nonce=0)",
+                         marker=dict(color="#90CAF9")))
+    fig.add_trace(go.Bar(x=x_cat, y=df["pct_unknown"], name="unknown (no balance/nonce reads)",
+                         marker=dict(color="#9E9E9E")))
+    fig.update_layout(
+        barmode="stack",
+        title="R-only accounts — empty vs non-empty"
+              "<br><sub>R-only accounts have no writes in window, so balance and nonce are "
+              "stable; empty = both observed as 0</sub>",
+        xaxis=dict(title="window W (days)", type="category"),
+        yaxis=dict(title="% of R-only accounts", ticksuffix="%", range=[0, 100],
+                   gridcolor="lightgray"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=0.99, y=0.5, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
+    )
+    fig.write_image(DATA_DIR_V2 / "account_r_empty_split.png", scale=2)
+    _show(fig)
+
+
 def run_slot_update_coverage() -> None:
     """Plot the per-W warm/cold update split persisted by `collect_v2` (or the smoke run)."""
     p = DATA_DIR_V2 / "slot_update_coverage.parquet"
@@ -629,6 +738,9 @@ def main() -> None:
     run_slot_typed(totals)
     run_slot_mixed_decomp(totals)
     run_slot_update_coverage()
+    run_slot_first_op()
+    run_account_first_op()
+    run_account_r_empty_split()
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
 

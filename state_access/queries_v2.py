@@ -143,6 +143,243 @@ ORDER BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
 """
 
 
+def slot_first_op(bn_now: int, days: int) -> str:
+    """Per-window count of slots split by what their FIRST operation in window is.
+
+    Motivation: under a hypothetical "EIP-8188 with read-side period bumping" (the first
+    read of an inactive slot would also bump its period — turning reads into write-like
+    operations from the user's perspective), the policy cost falls on slots whose first
+    in-window operation is a **nonzero read**. Zero reads can't bump the period because
+    the slot has no period to bump (it doesn't exist yet at value=0). Writes already
+    bump the period under base EIP-8188.
+
+    Event ordering: `(block_number, transaction_index)`. `internal_index` is per-table
+    (per-read-table or per-diff-table), not a single tx-wide opcode index, so it can't
+    be used for cross-table ordering. Ties (same block, same tx) are broken **in favour
+    of writes** (writes come before reads when both happen in the same tx) — a
+    conservative choice that under-counts the "first-op-is-read" set rather than over-
+    counting it.
+
+    Returns one row: `(total_slots, first_is_write, first_is_zero_read,
+    first_is_nonzero_read)`. The three subset counts sum to `total_slots` exactly.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    # event_order packs (block, tx_idx, op_kind) so that within (block, tx_idx) the
+    # write slot (op_kind=0) sorts before the read slot (op_kind=1).
+    return f"""
+WITH slot_events AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
+        toUInt8(0) AS is_read,
+        toUInt8(0) AS read_is_nonzero
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name = '{NETWORK}'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(contract_address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 1 AS event_order,
+        toUInt8(1) AS is_read,
+        toUInt8(value != '{_ZERO}') AS read_is_nonzero
+    FROM canonical_execution_storage_reads
+    WHERE meta_network_name = '{NETWORK}'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+per_slot AS (
+    SELECT
+        h,
+        argMin(is_read,         event_order) AS first_is_read,
+        argMin(read_is_nonzero, event_order) AS first_read_is_nonzero
+    FROM slot_events
+    GROUP BY h
+)
+SELECT
+    count() AS total_slots,
+    sum(toUInt8(first_is_read = 0)) AS first_is_write,
+    sum(toUInt8(first_is_read = 1 AND first_read_is_nonzero = 0)) AS first_is_zero_read,
+    sum(toUInt8(first_is_read = 1 AND first_read_is_nonzero = 1)) AS first_is_nonzero_read
+FROM per_slot
+"""
+
+
+def account_first_op(bn_now: int, days: int) -> str:
+    """Per-window count of accounts split by what their FIRST operation in window is.
+
+    Same motivation as `slot_first_op` — for a hypothetical read-side period-bumping
+    extension of EIP-8188, the policy cost falls on accounts whose first in-window
+    operation is a **nonzero read** (i.e. the read returns a populated balance or nonce).
+
+    Source tables:
+      writes — `balance_diffs`, `nonce_diffs`, `contracts` (account creation)
+      reads with values — `balance_reads.balance`, `nonce_reads.nonce`
+      reads without values — `address_appearances` (relationship-filtered)
+
+    Classification of the earliest event per account:
+      first_is_write           — earliest event is from a write source
+      first_is_nonzero_read    — earliest event is a balance_read with balance != 0
+                                 OR a nonce_read with nonce != 0
+      first_is_zero_read       — earliest event is balance_read with balance=0 or
+                                 nonce_read with nonce=0
+      first_is_appearance_read — earliest event is from address_appearances (no value
+                                 column; account state at read time unknown without a
+                                 cross-table join — reported separately)
+
+    Tie-breaking at the same `(block, tx_idx)`: priority writes > nonzero reads > zero
+    reads > appearance reads. Same ordering convention as `slot_first_op`.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    # event_order packs (block, tx_idx, op_priority).
+    #   op_priority: write=0, nonzero_read=1, zero_read=2, appearance_read=3
+    # So argMin on event_order at the same (block, tx_idx) picks writes first, then any
+    # nonzero read, then any zero read, then an appearance read.
+    #
+    # `canonical_execution_contracts` and `canonical_execution_address_appearances` lack a
+    # `transaction_index` column, so we look it up by `transaction_hash` from
+    # `canonical_execution_transaction` (which has both). The tx-lookup CTE is small
+    # (~5M rows per W=30d) and broadcast-joinable.
+    return f"""
+WITH tx_idx_lookup AS (
+    SELECT
+        transaction_hash,
+        toUInt64(transaction_index) AS tx_idx
+    FROM canonical_execution_transaction
+    WHERE meta_network_name = '{NETWORK}'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+all_events AS (
+    SELECT
+        cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
+        'write' AS op
+    FROM canonical_execution_balance_diffs
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
+        'write' AS op
+    FROM canonical_execution_nonce_diffs
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(c.contract_address) AS h,
+        toUInt64(c.block_number) * 10000000 + tx.tx_idx * 10 + 0 AS event_order,
+        'write' AS op
+    FROM canonical_execution_contracts AS c
+    GLOBAL INNER JOIN tx_idx_lookup AS tx USING transaction_hash
+    WHERE c.meta_network_name = '{NETWORK}' AND c.block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10
+            + if(balance != 0, 1, 2) AS event_order,
+        if(balance != 0, 'nonzero_read', 'zero_read') AS op
+    FROM canonical_execution_balance_reads
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10
+            + if(nonce != 0, 1, 2) AS event_order,
+        if(nonce != 0, 'nonzero_read', 'zero_read') AS op
+    FROM canonical_execution_nonce_reads
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(a.address) AS h,
+        toUInt64(a.block_number) * 10000000 + tx.tx_idx * 10 + 3 AS event_order,
+        'appearance_read' AS op
+    FROM canonical_execution_address_appearances AS a
+    GLOBAL INNER JOIN tx_idx_lookup AS tx USING transaction_hash
+    WHERE a.meta_network_name = '{NETWORK}'
+      AND a.block_number BETWEEN {bn_lo} AND {bn_hi}
+      AND a.relationship IN ({_RELATIONSHIP_LIST})
+),
+per_acct AS (
+    SELECT
+        h,
+        argMin(op, event_order) AS first_op
+    FROM all_events
+    GROUP BY h
+)
+SELECT
+    count() AS total_accounts,
+    sum(toUInt8(first_op = 'write'))           AS first_is_write,
+    sum(toUInt8(first_op = 'nonzero_read'))    AS first_is_nonzero_read,
+    sum(toUInt8(first_op = 'zero_read'))       AS first_is_zero_read,
+    sum(toUInt8(first_op = 'appearance_read')) AS first_is_appearance_read
+FROM per_acct
+"""
+
+
+def account_r_empty_split(bn_now: int, days: int) -> str:
+    """Of accounts in R (deduped against writes), how many are empty vs non-empty?
+
+    Empty = balance is observed as 0 AND nonce is observed as 0 throughout the window.
+    Since these accounts have NO writes in window (they're in R, not W), the balance
+    and nonce are constant within window — so per-account aggregations
+    `max(balance) = 0 AND max(nonce) = 0` correctly identifies empty accounts.
+
+    Accounts in R that only appear via `address_appearances` (no balance/nonce reads at
+    all) are reported separately as `unknown`: we have no value data for them within
+    this query alone.
+
+    Returns one row: `(total_r, empty_accounts, nonempty_accounts, unknown_accounts)`.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH r_set AS (
+    -- Accounts in R (in any read source) but NOT in any write source.
+    SELECT cityHash64(address) AS h
+    FROM (
+        SELECT address FROM canonical_execution_balance_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT address FROM canonical_execution_nonce_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT address FROM canonical_execution_address_appearances
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+          AND relationship IN ({_RELATIONSHIP_LIST})
+    )
+    GROUP BY address
+    HAVING cityHash64(address) NOT IN (
+        SELECT cityHash64(address) FROM canonical_execution_balance_diffs
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION DISTINCT
+        SELECT cityHash64(address) FROM canonical_execution_nonce_diffs
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION DISTINCT
+        SELECT cityHash64(contract_address) FROM canonical_execution_contracts
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+),
+balance_values AS (
+    SELECT cityHash64(address) AS h, max(toUInt256(balance)) AS max_balance
+    FROM canonical_execution_balance_reads
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    GROUP BY h
+),
+nonce_values AS (
+    SELECT cityHash64(address) AS h, max(nonce) AS max_nonce
+    FROM canonical_execution_nonce_reads
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    GROUP BY h
+)
+SELECT
+    count() AS total_r,
+    countIf(coalesce(max_balance, toUInt256(0)) = 0 AND coalesce(max_nonce, 0) = 0
+            AND (max_balance IS NOT NULL OR max_nonce IS NOT NULL)) AS empty_accounts,
+    countIf(coalesce(max_balance, toUInt256(0)) > 0 OR coalesce(max_nonce, 0) > 0) AS nonempty_accounts,
+    countIf(max_balance IS NULL AND max_nonce IS NULL) AS unknown_accounts
+FROM r_set
+LEFT JOIN balance_values USING h
+LEFT JOIN nonce_values USING h
+"""
+
+
 def slot_update_coverage(bn_now: int, days: int) -> str:
     """Per-window count of update SSTORE events split into warm vs cold under EIP-8188.
 
