@@ -527,28 +527,25 @@ account once:
 
 | W (days) | R-only total | empty | non-empty | unknown |
 |---:|---:|---:|---:|---:|
-| 1   |   135,922 | 1.79% | **98.21%** | 0.00% |
-| 7   |   586,826 | 3.71% | **96.29%** | 0.00% |
-| 14  | 1,065,388 | 3.66% | 96.34% | 0.00% |
-| 30  | 1,752,187 | 4.24% | 95.76% | 0.00% |
-| 60  | 2,619,858 | 5.68% | 94.32% | 0.00% |
-| 90  | 3,327,941 | 5.98% | 94.02% | 0.00% |
+| 1   |    135,922 | 1.79% | **98.21%** | 0 |
+| 7   |    586,826 | 3.71% | **96.29%** | 0 |
+| 14  |  1,065,388 | 3.66% | 96.34% | 0 |
+| 30  |  1,752,187 | 4.24% | 95.76% | 0 |
+| 60  |  2,619,858 | 5.68% | 94.32% | 0 |
+| 90  |  3,327,941 | 5.98% | 94.02% | 0 |
+| 180 |  8,061,680 | 5.71% | 94.29% | 10 |
+| 365 | 17,025,144 | 7.34% | **92.66%** | 11 |
 
-**Almost every R-only account is non-empty** — 94–98% across all windows, drifting only
-slightly toward empty as W grows. So under read-side EIP-8188, virtually all R-only
-account reads would bump a real period, converting reads into writes from the user's
-perspective. The empty-account "free pass" is structurally tiny. `unknown` is identically
-zero — every R-only account that appears via `address_appearances` also has at least one
-balance or nonce read in window.
+**Almost every R-only account is non-empty** — 93–98% across all windows, drifting only
+slightly toward empty as W grows (7.3% empty at W=365d). So under read-side EIP-8188,
+virtually all R-only account reads would bump a real period, converting reads into writes
+from the user's perspective. The empty-account "free pass" is structurally tiny.
+`unknown` is negligible (≤11 accounts at any W) — almost every R-only account that
+appears via `address_appearances` also has at least one balance or nonce read in window.
 
 This is the policy-relevant complement to the first-op analysis: even for accounts that
 aren't first-event reads, the *pure* R-only slice (where any read at all bumps a period)
 is dominated by non-empty objects.
-
-(The empty-split sweep tops out at W=90d — the W=180d/365d variants run two LEFT JOINs
-over the full year of `balance_reads` + `nonce_reads` and stalled the local cluster. The
-trend is flat enough that the tail adds nothing; re-run
-`state_access/_sweep_resume_all.py` if the exact W=180/365 numbers are wanted.)
 
 ## 5. Q3 — Concentration (top-N share of accesses)
 
@@ -902,40 +899,54 @@ Full SQL in `state_access/queries_v2.py` (`slot_first_op`, `account_first_op`).
 
 ### R-only empty/non-empty split (§4d.2)
 
+Single GROUP BY, no JOINs. Each source row is tagged with `UInt8` flags; we aggregate
+`max(balance != 0)` rather than `max(balance)` so the per-group state is a byte, not a
+`UInt256`. This is what lets it run at W=365d (the earlier triple-CTE + double-LEFT-JOIN
+form stalled the cluster).
+
 ```sql
-WITH r_set AS (
-    -- accounts in any read source but NOT in any write source
-    SELECT cityHash64(address) AS h
+WITH per_acct AS (
+    SELECT
+        h,
+        max(is_write)     AS any_write,
+        max(bal_nonzero)  AS bal_nonzero,
+        max(non_nonzero)  AS non_nonzero,
+        max(has_bal_read) AS has_bal_read,
+        max(has_non_read) AS has_non_read
     FROM (
-        SELECT address FROM canonical_execution_balance_reads WHERE in_window
+        -- writes (is_write=1): balance_diffs, nonce_diffs, contracts(contract_address)
+        SELECT cityHash64(address) AS h, toUInt8(1) AS is_write,
+               toUInt8(0) AS bal_nonzero, toUInt8(0) AS non_nonzero,
+               toUInt8(0) AS has_bal_read, toUInt8(0) AS has_non_read
+        FROM canonical_execution_balance_diffs WHERE in_window
+        UNION ALL ... -- nonce_diffs, contracts: same write pattern
+        -- value reads: balance_reads sets bal_nonzero/has_bal_read, nonce_reads similarly
         UNION ALL
-        SELECT address FROM canonical_execution_nonce_reads   WHERE in_window
+        SELECT cityHash64(address), toUInt8(0),
+               toUInt8(balance != 0), toUInt8(0), toUInt8(1), toUInt8(0)
+        FROM canonical_execution_balance_reads WHERE in_window
+        UNION ALL ... -- nonce_reads: toUInt8(nonce != 0) into non_nonzero, has_non_read=1
+        -- value-less reads: address_appearances (all flags 0 except it's a read presence)
         UNION ALL
-        SELECT address FROM canonical_execution_address_appearances
+        SELECT cityHash64(address), toUInt8(0),
+               toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
+        FROM canonical_execution_address_appearances
         WHERE in_window AND relationship IN (...)
-    ) GROUP BY address
-    HAVING h NOT IN (writes union for the same window)
-),
-balance_values AS (
-    SELECT cityHash64(address) AS h, max(toUInt256(balance)) AS max_balance
-    FROM canonical_execution_balance_reads WHERE in_window
-    GROUP BY h
-),
-nonce_values AS (
-    SELECT cityHash64(address) AS h, max(nonce) AS max_nonce
-    FROM canonical_execution_nonce_reads WHERE in_window
+    )
     GROUP BY h
 )
 SELECT
-    count() AS total_r,
-    countIf(coalesce(max_balance, toUInt256(0)) = 0 AND coalesce(max_nonce, 0) = 0
-            AND (max_balance IS NOT NULL OR max_nonce IS NOT NULL)) AS empty_accounts,
-    countIf(coalesce(max_balance, toUInt256(0)) > 0 OR coalesce(max_nonce, 0) > 0) AS nonempty_accounts,
-    countIf(max_balance IS NULL AND max_nonce IS NULL) AS unknown_accounts
-FROM r_set
-LEFT JOIN balance_values USING h
-LEFT JOIN nonce_values   USING h;
+    countIf(any_write = 0) AS total_r,
+    countIf(any_write = 0 AND bal_nonzero = 0 AND non_nonzero = 0
+            AND (has_bal_read = 1 OR has_non_read = 1)) AS empty_accounts,
+    countIf(any_write = 0 AND (bal_nonzero = 1 OR non_nonzero = 1)) AS nonempty_accounts,
+    countIf(any_write = 0 AND has_bal_read = 0 AND has_non_read = 0) AS unknown_accounts
+FROM per_acct;
 ```
+
+`contracts` is kept in the write set here (unlike `account_first_op`): ~1% of
+contract-creation accounts lack a `nonce_diff`/`balance_diff` in window, and dropping
+contracts would wrongly admit those written accounts into R.
 
 ### Cross-validation against the original analysis
 

@@ -318,57 +318,73 @@ def account_r_empty_split(bn_now: int, days: int) -> str:
     this query alone.
 
     Returns one row: `(total_r, empty_accounts, nonempty_accounts, unknown_accounts)`.
+
+    Single GROUP BY, no JOINs. Each source row is tagged with per-event flags, then
+    aggregated per account with `max`. Two things keep this cheap enough to run at
+    W=365:
+
+    - The per-group state is a handful of `UInt8` flags, not a `UInt256` balance. We only
+      need to know whether a balance/nonce was *ever* nonzero, so we aggregate
+      `max(balance != 0)` rather than `max(balance)` — one byte instead of 32.
+
+    Unlike `account_first_op`, the write set here keeps `canonical_execution_contracts`:
+    ~1% of contract-creation accounts have no `nonce_diff`/`balance_diff` in the same
+    window, and dropping contracts would wrongly admit those (genuinely-written) accounts
+    into R. No JOIN is needed — we only read the `contract_address` for the write flag.
     """
     bn_lo, bn_hi = _window(bn_now, days)
     return f"""
-WITH r_set AS (
-    -- Accounts in R (in any read source) but NOT in any write source.
-    SELECT cityHash64(address) AS h
+WITH per_acct AS (
+    SELECT
+        h,
+        max(is_write)     AS any_write,
+        max(bal_nonzero)  AS bal_nonzero,
+        max(non_nonzero)  AS non_nonzero,
+        max(has_bal_read) AS has_bal_read,
+        max(has_non_read) AS has_non_read
     FROM (
-        SELECT address FROM canonical_execution_balance_reads
+        SELECT cityHash64(address) AS h, toUInt8(1) AS is_write,
+               toUInt8(0) AS bal_nonzero, toUInt8(0) AS non_nonzero,
+               toUInt8(0) AS has_bal_read, toUInt8(0) AS has_non_read
+        FROM canonical_execution_balance_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT address FROM canonical_execution_nonce_reads
+        SELECT cityHash64(address), toUInt8(1),
+               toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
+        FROM canonical_execution_nonce_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT address FROM canonical_execution_address_appearances
+        SELECT cityHash64(contract_address), toUInt8(1),
+               toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
+        FROM canonical_execution_contracts
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), toUInt8(0),
+               toUInt8(balance != 0), toUInt8(0), toUInt8(1), toUInt8(0)
+        FROM canonical_execution_balance_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), toUInt8(0),
+               toUInt8(0), toUInt8(nonce != 0), toUInt8(0), toUInt8(1)
+        FROM canonical_execution_nonce_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), toUInt8(0),
+               toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
+        FROM canonical_execution_address_appearances
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
           AND relationship IN ({_RELATIONSHIP_LIST})
     )
-    GROUP BY address
-    HAVING cityHash64(address) NOT IN (
-        SELECT cityHash64(address) FROM canonical_execution_balance_diffs
-        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-        UNION DISTINCT
-        SELECT cityHash64(address) FROM canonical_execution_nonce_diffs
-        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-        UNION DISTINCT
-        SELECT cityHash64(contract_address) FROM canonical_execution_contracts
-        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-    )
-),
-balance_values AS (
-    SELECT cityHash64(address) AS h, max(toUInt256(balance)) AS max_balance
-    FROM canonical_execution_balance_reads
-    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-    GROUP BY h
-),
-nonce_values AS (
-    SELECT cityHash64(address) AS h, max(nonce) AS max_nonce
-    FROM canonical_execution_nonce_reads
-    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     GROUP BY h
 )
 SELECT
-    count() AS total_r,
-    countIf(coalesce(max_balance, toUInt256(0)) = 0 AND coalesce(max_nonce, 0) = 0
-            AND (max_balance IS NOT NULL OR max_nonce IS NOT NULL)) AS empty_accounts,
-    countIf(coalesce(max_balance, toUInt256(0)) > 0 OR coalesce(max_nonce, 0) > 0) AS nonempty_accounts,
-    countIf(max_balance IS NULL AND max_nonce IS NULL) AS unknown_accounts
-FROM r_set
-LEFT JOIN balance_values USING h
-LEFT JOIN nonce_values USING h
+    countIf(any_write = 0) AS total_r,
+    countIf(any_write = 0 AND bal_nonzero = 0 AND non_nonzero = 0
+            AND (has_bal_read = 1 OR has_non_read = 1)) AS empty_accounts,
+    countIf(any_write = 0 AND (bal_nonzero = 1 OR non_nonzero = 1)) AS nonempty_accounts,
+    countIf(any_write = 0 AND has_bal_read = 0 AND has_non_read = 0) AS unknown_accounts
+FROM per_acct
 """
 
 
