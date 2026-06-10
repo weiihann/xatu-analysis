@@ -227,27 +227,28 @@ def account_first_op(bn_now: int, days: int) -> str:
 
     Tie-breaking at the same `(block, tx_idx)`: priority writes > nonzero reads > zero
     reads > appearance reads. Same ordering convention as `slot_first_op`.
+
+    No JOIN against `canonical_execution_transaction`. Two simplifications make the
+    `transaction_index` lookup unnecessary:
+
+    - `canonical_execution_contracts` is dropped. Every contract creation also emits a
+      `nonce_diff` (nonce 0->1 under EIP-161) on the same address at the same real
+      transaction_index, so the account is already captured as a write via `nonce_diffs`
+      with correct ordering. Dropping contracts changes neither the event set's first-op
+      result nor the R∪W denominator (contract addresses ⊆ nonce_diff addresses).
+    - `address_appearances` (which lacks `transaction_index`) is given an *end-of-block*
+      sort position (`+ 9999999`) instead of a real tx_idx. Because the block number
+      dominates `event_order`, cross-block ordering stays exact; within a block the
+      appearance loses every tie — which matches the intended priority (appearance is the
+      lowest). Empirically appearances never win the first-op anyway. This keeps
+      appearance-only accounts in the R∪W denominator without needing their tx_idx.
     """
     bn_lo, bn_hi = _window(bn_now, days)
     # event_order packs (block, tx_idx, op_priority).
-    #   op_priority: write=0, nonzero_read=1, zero_read=2, appearance_read=3
-    # So argMin on event_order at the same (block, tx_idx) picks writes first, then any
-    # nonzero read, then any zero read, then an appearance read.
-    #
-    # `canonical_execution_contracts` and `canonical_execution_address_appearances` lack a
-    # `transaction_index` column, so we look it up by `transaction_hash` from
-    # `canonical_execution_transaction` (which has both). The tx-lookup CTE is small
-    # (~5M rows per W=30d) and broadcast-joinable.
+    #   op_priority: write=0, nonzero_read=1, zero_read=2; appearance uses end-of-block.
+    # block multiplier 10_000_000 >> max(tx_idx*10 + priority), so blocks never overlap.
     return f"""
-WITH tx_idx_lookup AS (
-    SELECT
-        transaction_hash,
-        toUInt64(transaction_index) AS tx_idx
-    FROM canonical_execution_transaction
-    WHERE meta_network_name = '{NETWORK}'
-      AND block_number BETWEEN {bn_lo} AND {bn_hi}
-),
-all_events AS (
+WITH all_events AS (
     SELECT
         cityHash64(address) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
@@ -261,14 +262,6 @@ all_events AS (
         'write' AS op
     FROM canonical_execution_nonce_diffs
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-    UNION ALL
-    SELECT
-        cityHash64(c.contract_address) AS h,
-        toUInt64(c.block_number) * 10000000 + tx.tx_idx * 10 + 0 AS event_order,
-        'write' AS op
-    FROM canonical_execution_contracts AS c
-    GLOBAL INNER JOIN tx_idx_lookup AS tx USING transaction_hash
-    WHERE c.meta_network_name = '{NETWORK}' AND c.block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
         cityHash64(address) AS h,
@@ -287,14 +280,13 @@ all_events AS (
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
-        cityHash64(a.address) AS h,
-        toUInt64(a.block_number) * 10000000 + tx.tx_idx * 10 + 3 AS event_order,
+        cityHash64(address) AS h,
+        toUInt64(block_number) * 10000000 + 9999999 AS event_order,
         'appearance_read' AS op
-    FROM canonical_execution_address_appearances AS a
-    GLOBAL INNER JOIN tx_idx_lookup AS tx USING transaction_hash
-    WHERE a.meta_network_name = '{NETWORK}'
-      AND a.block_number BETWEEN {bn_lo} AND {bn_hi}
-      AND a.relationship IN ({_RELATIONSHIP_LIST})
+    FROM canonical_execution_address_appearances
+    WHERE meta_network_name = '{NETWORK}'
+      AND block_number BETWEEN {bn_lo} AND {bn_hi}
+      AND relationship IN ({_RELATIONSHIP_LIST})
 ),
 per_acct AS (
     SELECT
