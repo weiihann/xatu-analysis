@@ -263,11 +263,10 @@ def _plot_warmth(q1: pd.DataFrame, object_type: str, total_live: int) -> go.Figu
         ))
     label = "live state" if object_type == "combined" else f"live {object_type}s"
     fig.update_layout(
-        title=f"Q1 — Warmth: {label} touched, by access set and window"
+        title=f"Warmth: {label} touched, by access set and window"
               f"<br><sub>denominator = {total_live:,}; "
-              f"W = writes (matches the original 'warm'); "
-              f"R = pure reads added on top; R∪W = full warm set</sub>",
-        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+              f"W = writes; R = pure reads added on top; R∪W = full warm set</sub>",
+        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title=f"% of {label}", ticksuffix="%",
                    gridcolor="lightgray", rangemode="tozero"),
         template="plotly_white", width=1100, height=600,
@@ -287,8 +286,8 @@ def _plot_concentration(q3: pd.DataFrame, object_type: str, which: Literal["top_
         ))
     label = "top 1%" if which == "top_1pct_share" else "top 10%"
     fig.update_layout(
-        title=f"Q3 — Concentration: {label} of {object_type}s capture X% of accesses",
-        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        title=f"Concentration: {label} of {object_type}s capture X% of accesses",
+        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title=f"share of accesses ({label} of objects)", ticksuffix="%",
                    gridcolor="lightgray", range=[0, 100]),
         template="plotly_white", width=1100, height=580,
@@ -336,7 +335,7 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
         keys = ["W_only_create", "W_only_update", "W_only_delete", "W_mixed"]
         colors = W_TYPE_COLORS
         labels = W_TYPE_LABEL
-        title = "Q1 — Slot W (writes) split by value transition"
+        title = "Slot W (writes) split by value transition"
         sub = "create-only / update-only / delete-only / mixed; stacks sum to |W|"
     else:
         # R_mixed is always 0 — a slot with no writes in window has a stable value,
@@ -344,7 +343,7 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
         keys = ["R_only_zero", "R_only_nonzero"]
         colors = R_TYPE_COLORS
         labels = R_TYPE_LABEL
-        title = "Q1 — Slot R (reads-not-written) split by returned value"
+        title = "Slot R (reads-not-written) split by returned value"
         sub = "value=0 (empty-slot probe) vs value≠0 (populated read); stacks sum to |R|"
     fig = go.Figure()
     for k in keys:
@@ -356,7 +355,7 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
         ))
     fig.update_layout(
         title=f"{title}<br><sub>{sub}; denominator = {total_live:,} live slots</sub>",
-        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title="% of live slots", ticksuffix="%",
                    gridcolor="lightgray", rangemode="tozero"),
         template="plotly_white", width=1100, height=560,
@@ -434,9 +433,9 @@ def _plot_slot_mixed_decomp(decomp: pd.DataFrame) -> go.Figure:
         ))
     fig.update_layout(
         title="Slot W_mixed decomposition — composition of slots with ≥2 write types"
-              "<br><sub>stacks sum to 100% of W_mixed at each W; "
+              "<br><sub>stacks sum to 100% of W_mixed at each T; "
               "C+D (1-cycle) = born and died once in window (ephemeral state)</sub>",
-        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title="% of W_mixed", ticksuffix="%",
                    gridcolor="lightgray", range=[0, 100]),
         template="plotly_white", width=1100, height=580,
@@ -463,7 +462,7 @@ def run_slot_mixed_decomp(totals: dict[str, int]) -> None:
     fig.write_image(DATA_DIR_V2 / "q1_warmth_slot_mixed_decomp.png", scale=2)
     _show(fig)
 
-    print(f"\n>>> W_mixed decomposition (share of W_mixed per W):")
+    print(f"\n>>> W_mixed decomposition (share of W_mixed per T):")
     pivot = decomp.pivot(index="window_days", columns="combo",
                         values="share_of_mixed").fillna(0).reindex(
                             columns=_MIXED_COMBOS_ORDER, fill_value=0)
@@ -495,7 +494,7 @@ def run_slot_first_op() -> None:
         title="Slot first-operation classification — policy-bad set is the nonzero-read piece"
               "<br><sub>under hypothetical EIP-8188 read-side period bumping, only nonzero "
               "reads would convert from no-op into a period-bumping operation</sub>",
-        xaxis=dict(title="window W (days)", type="category"),
+        xaxis=dict(title="window T (days)", type="category"),
         yaxis=dict(title="% of slots in R∪W", ticksuffix="%", range=[0, 100],
                    gridcolor="lightgray"),
         template="plotly_white", width=1100, height=560,
@@ -534,7 +533,7 @@ def run_account_first_op() -> None:
         title="Account first-operation classification"
               "<br><sub>tie-break at same (block, tx_idx): writes > nonzero reads > zero "
               "reads > appearance reads</sub>",
-        xaxis=dict(title="window W (days)", type="category"),
+        xaxis=dict(title="window T (days)", type="category"),
         yaxis=dict(title="% of accounts in R∪W", ticksuffix="%", range=[0, 100],
                    gridcolor="lightgray"),
         template="plotly_white", width=1100, height=560,
@@ -569,7 +568,7 @@ def run_account_r_empty_split() -> None:
         title="R-only accounts — empty vs non-empty"
               "<br><sub>R-only accounts have no writes in window, so balance and nonce are "
               "stable; empty = both observed as 0</sub>",
-        xaxis=dict(title="window W (days)", type="category"),
+        xaxis=dict(title="window T (days)", type="category"),
         yaxis=dict(title="% of R-only accounts", ticksuffix="%", range=[0, 100],
                    gridcolor="lightgray"),
         template="plotly_white", width=1100, height=560,
@@ -606,7 +605,7 @@ def run_slot_update_coverage() -> None:
         title="Slot UPDATE coverage — % of update events that are warm under EIP-8188 semantics"
               "<br><sub>warm = the slot had at least one prior create-or-update event in window; "
               "cold = the update IS the slot's first warming event</sub>",
-        xaxis=dict(title="window W (days)", type="log", gridcolor="lightgray"),
+        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
         yaxis=dict(title="% of update events", ticksuffix="%", range=[0, 100],
                    gridcolor="lightgray"),
         template="plotly_white", width=1100, height=560,
