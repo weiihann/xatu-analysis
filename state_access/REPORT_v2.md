@@ -448,11 +448,15 @@ the same `(block, tx_idx)`, **writes > nonzero reads > zero reads > appearance r
 This under-counts the policy-bad set (a read that actually preceded a write in the same
 tx gets classified as "first = write"), but it's the safer error to make.
 
-`canonical_execution_contracts` and `canonical_execution_address_appearances` don't have
-a `transaction_index` column — we look it up from `canonical_execution_transaction` by
-`transaction_hash` (via a `GLOBAL INNER JOIN`). For this to be accurate the local
-`canonical_execution_transaction` had to be backfilled from ethpandaops for blocks
-`[23,001,000, 25,189,620]`; pre-23M coverage was already complete on local.
+The account query needs no JOIN against `canonical_execution_transaction`:
+`canonical_execution_contracts` is dropped (every contract creation also emits a
+`nonce_diff` on the same address at the same real tx_index, so the account is already
+captured as a write with correct ordering), and `address_appearances` (which lacks a
+`transaction_index`) is given an end-of-block sort position — the block number dominates
+`event_order`, so cross-block ordering is exact and the appearance correctly loses every
+same-block tie. (We did backfill `canonical_execution_transaction` for blocks
+`[23,001,000, 25,189,620]` earlier when an interim version used the JOIN; it's no longer
+on the query path.)
 
 ### Slots — first-operation classification
 
@@ -462,19 +466,19 @@ For each W, the share of slots in R∪W by what their first event is:
 |---:|---:|---:|---:|
 | 1   | 58.26% | 27.97% | **13.77%** |
 | 7   | 62.74% | 28.97% |  8.29% |
-| 14  | 67.57% | 25.66% |  6.78% |
+| 14  | 67.56% | 25.66% |  6.78% |
 | 30  | 68.54% | 25.91% |  5.56% |
-| 60  | 69.72% | 26.34% |  3.94% |
-| 90  | 69.42% | 27.02% |  3.55% |
+| 60  | 69.72% | 26.33% |  3.94% |
+| 90  | 69.42% | 27.02% |  3.56% |
 | 180 | 71.05% | 26.22% |  2.73% |
+| 365 | 69.31% | 28.42% |  2.27% |
 
 ![Slot first-op classification](data/v2/slot_first_op.png)
 
 **Reading.** At W=30d, **5.56% of slots in R∪W** (≈ 3.6M slots) would be hit by the
 hypothetical read-side period bump — their first in-window event is an SLOAD returning a
-populated value. By W=180d this drops to 2.73%, and the long-run asymptote is small
-because as W grows, the chance that an object has *some* write earlier in the same
-window also grows.
+populated value. This falls monotonically to **2.27% at W=365d** because as W grows, the
+chance that an object has *some* write earlier in the same window grows too.
 
 The 26–28% **zero-read** band is large but policy-irrelevant under this framing — those
 are first-time SLOADs on slots that have no period to bump. They're just structural
@@ -482,65 +486,69 @@ are first-time SLOADs on slots that have no period to bump. They're just structu
 
 ### Accounts — first-operation classification
 
-Account data is currently complete through W=60d. W=90d and W=180d hit the local
-cluster's memory limit during the GLOBAL JOIN (the query is recoverable; re-run after
-cluster maintenance closes those rows). The pattern through W=60d is already clear.
+For each W, the share of accounts in R∪W by what their first event is:
 
 | W (days) | first = write | first = nonzero read | first = zero read |
 |---:|---:|---:|---:|
-| 1   | 83.91% | **15.75%** | 0.34% |
-| 7   | 87.51% | 11.97% | 0.52% |
-| 14  | 86.94% | 12.50% | 0.56% |
-| 30  | 89.11% | 10.35% | 0.54% |
-| 60  | 90.94% |  8.48% | 0.58% |
+| 1   | 83.84% | **15.75%** |  0.41% |
+| 7   | 87.36% | 11.98% |  0.67% |
+| 14  | 86.79% | 12.51% |  0.71% |
+| 30  | 88.96% | 10.36% |  0.68% |
+| 60  | 90.78% |  8.48% |  0.75% |
+| 90  | 92.24% |  7.07% |  0.69% |
+| 180 | 84.85% | 10.65% |  4.51% |
+| 365 | 81.05% |  8.43% | 10.52% |
 
 (`first = appearance read` is identically 0 — appearance reads always lose the
 tie-break to balance/nonce reads when present at the same `(block, tx_idx)`, because the
-same tx that emits an appearance also emits balance and nonce reads on the same
-account.)
+same tx that emits an appearance also emits balance and nonce reads on the same account.)
 
 ![Account first-op classification](data/v2/account_first_op.png)
 
 **Reading.** The policy-bad set is even more pronounced for accounts at small W:
 **15.75% of warm accounts at W=1d** have a nonzero balance/nonce read as their first
-event. By W=60d this drops to 8.48% — still ~2.7M accounts per W=60d window. Most of
-these are likely "view-call targets" — popular contracts being called read-only via
-balance/nonce checks before a tx decides whether to interact.
-
-Zero reads on accounts (balance=0 AND nonce read returns 0) are a tiny share — almost
-every account that gets read at all is non-empty. This sets up §4d.2.
+event. It bottoms out around 7% at W=90d, then ticks back up — at W=180d/365d the
+zero-read band swells (4.5% / 10.5%) as the universe of long-dormant accounts that get
+probed-while-empty grows. Most of the nonzero-read-first accounts are "view-call
+targets" — popular contracts called read-only via balance/nonce checks before a tx
+decides whether to interact.
 
 ### R-only accounts — empty vs non-empty
 
-Within the R set (accounts in `_reads` with NO write in window), the balance and nonce
-values are stable through window (no writes ⇒ no value changes). So we can classify each
-R-only account once:
+Within the R set (accounts in `_reads` with NO write in window), balance and nonce are
+stable through window (no writes ⇒ no value changes). So we can classify each R-only
+account once:
 
-- **empty**: `max(balance) = 0 AND max(nonce) = 0` from `balance_reads` and
-  `nonce_reads` in window.
+- **empty**: `max(balance) = 0 AND max(nonce) = 0` from `balance_reads` and `nonce_reads`
+  in window.
 - **non-empty**: `max(balance) > 0 OR max(nonce) > 0`.
-- **unknown**: no `balance_reads` or `nonce_reads` in window for this account — only
-  observed via `address_appearances`. No value-level data to classify.
-
-Smoke-test numbers (W=1d, 7d only — the full sweep didn't complete; the cluster crashed
-under the LEFT JOIN with two `(balance_reads + nonce_reads)` aggregates):
+- **unknown**: no `balance_reads` or `nonce_reads` in window — only observed via
+  `address_appearances`. No value-level data to classify.
 
 | W (days) | R-only total | empty | non-empty | unknown |
 |---:|---:|---:|---:|---:|
-| 1   |  135,922 | 1.79% | **98.21%** | 0.00% |
-| 7   |  586,826 | 3.71% | **96.29%** | 0.00% |
+| 1   |   135,922 | 1.79% | **98.21%** | 0.00% |
+| 7   |   586,826 | 3.71% | **96.29%** | 0.00% |
+| 14  | 1,065,388 | 3.66% | 96.34% | 0.00% |
+| 30  | 1,752,187 | 4.24% | 95.76% | 0.00% |
+| 60  | 2,619,858 | 5.68% | 94.32% | 0.00% |
+| 90  | 3,327,941 | 5.98% | 94.02% | 0.00% |
 
-**Almost every R-only account is non-empty.** ~98% at W=1d, ~96% at W=7d. So under
-read-side EIP-8188, virtually all R-only account reads would bump a real period —
-converting reads into writes from the user's perspective. The empty-account "free pass"
-is structurally tiny.
+**Almost every R-only account is non-empty** — 94–98% across all windows, drifting only
+slightly toward empty as W grows. So under read-side EIP-8188, virtually all R-only
+account reads would bump a real period, converting reads into writes from the user's
+perspective. The empty-account "free pass" is structurally tiny. `unknown` is identically
+zero — every R-only account that appears via `address_appearances` also has at least one
+balance or nonce read in window.
 
-This is the policy-relevant complement to §4d's first-op analysis: even for accounts
-that aren't first-event reads, the *pure* R-only slice (where any read at all bumps a
-period) is dominated by non-empty objects.
+This is the policy-relevant complement to the first-op analysis: even for accounts that
+aren't first-event reads, the *pure* R-only slice (where any read at all bumps a period)
+is dominated by non-empty objects.
 
-(The empty-split sweep for W=14d+ and the account first-op for W=90d/180d are pending —
-re-run `state_access/_sweep_accounts_resume.py` when the cluster is back up.)
+(The empty-split sweep tops out at W=90d — the W=180d/365d variants run two LEFT JOINs
+over the full year of `balance_reads` + `nonce_reads` and stalled the local cluster. The
+trend is flat enough that the tail adds nothing; re-run
+`state_access/_sweep_resume_all.py` if the exact W=180/365 numbers are wanted.)
 
 ## 5. Q3 — Concentration (top-N share of accesses)
 
@@ -829,10 +837,10 @@ max.
 ### First-operation classification (§4d)
 
 For each object in R∪W, find its earliest event in window by `(block_number,
-transaction_index)` and classify. Slots use the same UNION-ALL-then-`argMin` shape as
-`slot_update_coverage`; accounts add a `GLOBAL INNER JOIN` against
-`canonical_execution_transaction` to recover `transaction_index` for `contracts` and
-`address_appearances` (which lack the column).
+transaction_index)` and classify. Slots and accounts both use the
+UNION-ALL-then-`argMin` shape, no JOIN: `contracts` is dropped (redundant with
+`nonce_diffs`) and `address_appearances` gets an end-of-block sort position (it always
+loses same-block ties, which matches its lowest priority).
 
 ```sql
 -- Slots — slot_first_op
@@ -868,22 +876,19 @@ SELECT
     sum(toUInt8(first_is_read = 1 AND first_read_is_nonzero = 1)) AS first_is_nonzero_read
 FROM per_slot;
 
--- Accounts — account_first_op (priority packing into event_order so tie-break is
--- write > nonzero_read > zero_read > appearance_read at same (block, tx_idx))
-WITH tx_idx_lookup AS (
-    SELECT transaction_hash, toUInt64(transaction_index) AS tx_idx
-    FROM canonical_execution_transaction
-    WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-),
-all_events AS (
+-- Accounts — account_first_op (priority packing into event_order so the tie-break is
+-- write > nonzero_read > zero_read > appearance_read at the same (block, tx_idx))
+WITH all_events AS (
     SELECT cityHash64(address) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
         'write' AS op
     FROM canonical_execution_balance_diffs
     WHERE meta_network_name='mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
-    UNION ALL ...  -- (5 more sources: nonce_diffs, contracts via JOIN, balance_reads
-                   --  with priority +1/+2 by balance!=0, nonce_reads similarly,
-                   --  address_appearances via JOIN with priority +3)
+    UNION ALL  -- nonce_diffs (write, +0)
+    UNION ALL  -- balance_reads: +1 if balance!=0 else +2, op nonzero_read/zero_read
+    UNION ALL  -- nonce_reads:   +1 if nonce!=0   else +2, op nonzero_read/zero_read
+    UNION ALL  -- address_appearances: event_order = block*10000000 + 9999999 (end-of-block),
+               --   op appearance_read; no tx_index needed, always loses same-block ties
 )
 SELECT count() AS total_accounts,
        sum(toUInt8(op='write'))           AS first_is_write,
