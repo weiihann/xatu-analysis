@@ -87,7 +87,7 @@ been run to completion** and verified zero-gap over `[15,537,394, 25,189,620]`:
 | script | table(s) | what it filled |
 |---|---|---|
 | `backfill_reads.py` | `canonical_execution_{storage,balance,nonce}_reads` | ~7.5M rows across narrow gap bands |
-| `backfill_address_appearances.py` | `canonical_execution_address_appearances` | the `[20.5M, 25.19M]` mid+tail gaps (~900M rows total over 3 passes) — note pre-Dencun `[15.5M, 19.4M]` was deliberately NOT filled (coverage gap, not ingest failure; out of scope) |
+| `backfill_address_appearances.py` | `canonical_execution_address_appearances` | the `[20.5M, 25.19M]` mid+tail gaps (~900M rows total over 3 passes). (An earlier note claimed pre-Dencun `[15.5M, 19.4M]` was left unfilled — empirically false as of 2026-06-12: local bucket counts match ethpandaops to ~0.1% across the whole post-merge range.) |
 | `backfill_transaction.py` | `canonical_execution_transaction` | 34,901 blocks in gap buckets 230/232/251. NOTE: this was needed by an interim `account_first_op` that used a JOIN to recover tx_index; the final query no longer JOINs, so this table is **not on the v2 query path anymore**, but the backfill is harmless and done. |
 
 All three scripts are **idempotent** (ReplicatedReplacingMergeTree dedups; they re-discover
@@ -116,9 +116,10 @@ reverted writes, reads include reverted reads; system-call writes (EIP-4788/2935
 
 ```
 state_access/
-  config_v2.py            # ANCHOR_BLOCK_V2, WINDOWS_V2, DATA_DIR_V2 (BINS is vestigial — Q2 was removed)
-  queries_v2.py           # 6 SQL builders (the actual analysis logic) — see below
+  config_v2.py            # ANCHOR_BLOCK_V2, MERGE_BLOCK, WINDOWS_V2, DATA_DIR_V2 (BINS is vestigial — Q2 was removed)
+  queries_v2.py           # SQL builders (the actual analysis logic): 6 windowed + 8 full-history event-totals
   collect_v2.py           # drives slot/account/slot_typed histograms → data/v2/*.parquet (resumable per (T, object_type))
+  collect_v2_history.py   # full-history event totals, 1M-block chunks, era-split profiles (resumable per (kind, chunk))
   analysis_v2.py          # derives tables + renders all PNG charts from the parquets; `main()` runs everything
   _sweep_resume_all.py    # one-off driver that ran first_op + empty_split sweeps incrementally (idempotent; kept for re-runs)
   backfill_*.py           # the three completed backfills (§3)
@@ -158,8 +159,9 @@ Has inline verification asserts (additivity `|R∪W|=|W|+|R|`, partition sums, m
 
 ```bash
 # from repo root, with .env populated
-uv run python -m state_access.collect_v2      # builds slot/account/slot_typed histograms (~20 min; resumable)
-uv run python -m state_access.analysis_v2     # derives all tables + charts from parquets (no DB; ~1 min)
+uv run python -m state_access.collect_v2          # slot/account/slot_typed histograms (~20 min; resumable)
+uv run python -m state_access.collect_v2_history  # full-history event totals (~10 min; resumable)
+uv run python -m state_access.analysis_v2         # derives all tables + charts from parquets (no DB; ~1 min)
 ```
 
 `collect_v2.py` only builds the three histograms (`slot`, `account`, `slot_typed` —
@@ -223,6 +225,12 @@ sections, keep that — describe v2 on its own terms.
 - **Read-side period bump** (§8): if reads also bumped periods, the bad-UX set (first op is
   a nonzero read) is ~5.6% of warm slots / ~10% of warm accounts at T=30d. And **93–98% of
   R-only accounts are non-empty**, so the "empty accounts are free" escape hatch is tiny.
+- **Full-history event mix** (§4/§5 history subsections): write traffic is
+  update-dominated (66% of 9.2B slot write events) and read traffic populated-dominated
+  (70% of 23.7B SLOADs) — both the inverse of the per-object windowed views; the mix is
+  era-stable across the merge. Creates−deletes closes to 100.4% of live slots. Reads
+  outnumber writes ~2.6:1 (slots) / ~6:1 (accounts). `nonce_reads.nonce` is never 0
+  (post-increment artifact — flagged in §5).
 
 ### Known caveat (documented in §8, important)
 The `account_r_empty_split` "empty" bucket is **not confirmed-empty**. At every T the
