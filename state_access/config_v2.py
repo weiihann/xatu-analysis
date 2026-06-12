@@ -29,6 +29,8 @@ SWEEP_STEP = 50_400  # 7 days * 7,200 blocks/day
 
 def anchors_v2(window_days: int) -> list[int]:
     """Weekly anchor blocks for `window_days`, ascending; last == ANCHOR_BLOCK_V2."""
+    # v2 has no separate "today" window on top of the lookback, so the floor is T*7200
+    # (v1 used (T+1)*7200).
     floor = MERGE_BLOCK + window_days * 7_200
     out: list[int] = []
     block = ANCHOR_BLOCK_V2
@@ -36,6 +38,7 @@ def anchors_v2(window_days: int) -> list[int]:
         out.append(block)
         block -= SWEEP_STEP
     return sorted(out)
+
 
 # Fixed bins for Q2 (access-frequency tail). Each entry is (lo, hi, label) where lo/hi are
 # inclusive bounds on the per-key access count. `None` for `hi` means open-ended.
