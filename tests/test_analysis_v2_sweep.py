@@ -37,3 +37,30 @@ def test_verify_rows_catches_broken_partition():
     bad["slot_W_mixed"] = 7
     with pytest.raises(AssertionError, match="partition"):
         verify_rows(pd.DataFrame([bad]))
+
+
+def test_verify_rows_catches_stale_denominator():
+    bad = _ok_row()
+    bad["denom_block"] = bad["anchor_block"] - 60_000
+    with pytest.raises(AssertionError, match="stale denominator"):
+        verify_rows(pd.DataFrame([bad]))
+
+
+def test_verify_rows_catches_broken_acct_additivity():
+    bad = _ok_row()
+    bad["acct_RW_union"] = 99
+    with pytest.raises(AssertionError, match="acct additivity"):
+        verify_rows(pd.DataFrame([bad]))
+
+
+def test_verify_against_snapshot_catches_mismatch(tmp_path, monkeypatch):
+    import state_access.analysis_v2_sweep as mod
+    ref = pd.DataFrame([{"window_days": 30, "W": 11, "R": 4,
+                         "total_updates": 9, "warm_updates": 8}])
+    ref.to_parquet(tmp_path / "q1_warmth_slot_typed.parquet", index=False)
+    ref.to_parquet(tmp_path / "q1_warmth_account.parquet", index=False)
+    ref.to_parquet(tmp_path / "slot_update_coverage.parquet", index=False)
+    monkeypatch.setattr(mod, "DATA_DIR_V2", tmp_path)
+    row = _ok_row()  # slot_W=10 != ref W=11
+    with pytest.raises(AssertionError, match="snapshot mismatch"):
+        mod.verify_against_snapshot(pd.DataFrame([row]))
