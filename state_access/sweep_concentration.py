@@ -15,69 +15,50 @@ import pandas as pd
 _FRACTIONS = {"top1": 0.01, "top10": 0.10}
 
 
-def _set_view(hist: pd.DataFrame, access_type: str) -> tuple[pd.DataFrame, str]:
-    """Filter histogram rows for the given access_type lens.
-
-    Args:
-        hist: DataFrame with columns (slice, n_w, n_r, n_keys).
-        access_type: One of "W", "R", "RW_union".
-
-    Returns:
-        (filtered_DataFrame, access_column_name) where access_column_name is
-        the column to use for sorting (either "n_w", "n_r", or a computed sum).
-    """
+def _set_view(hist: pd.DataFrame, access_type: str) -> tuple[pd.DataFrame, pd.Series]:
     if access_type == "W":
-        return hist[hist["slice"].isin(["w_only", "rw"])], "n_w"
+        sub = hist[hist["slice"].isin(["w_only", "rw"])]
+        return sub, sub["n_w"]
     if access_type == "R":
-        return hist[hist["slice"] == "r_only"], "n_r"
-    # RW_union: computed on the fly
-    return hist, None
+        sub = hist[hist["slice"] == "r_only"]
+        return sub, sub["n_r"]
+    return hist, hist["n_w"] + hist["n_r"]
 
 
 def concentration_shares(hist: pd.DataFrame) -> dict[str, float]:
     """Top-1% / top-10% share of accesses for the W / R / R∪W sets, in one dict.
 
-    Args:
-        hist: DataFrame with columns (slice, n_w, n_r, n_keys).
-              Rows are (access_per_key, value_count) pairs from a histogram.
-
-    Returns:
-        Dictionary with keys like "top1_W", "top10_W", "top1_R", "top10_R",
-        "top1_RW_union", "top10_RW_union". Values are floats in [0, 1] or NaN
-        if the set is empty.
+    Exact for "top ceil(f·N) keys": rows are aggregated into equal-access-count bands
+    (keys within a band are interchangeable), and the band at the cutoff is filled
+    partially. Deterministic and order-independent — per-row sorts instead include
+    whole histogram rows at the cutoff, overshooting the key target by a
+    sort-order-dependent amount (up to several pp when the cutoff lands inside a
+    large tie band).
     """
     out: dict[str, float] = {}
     for access_type in ("W", "R", "RW_union"):
-        sub, col = _set_view(hist, access_type)
+        sub, acc = _set_view(hist, access_type)
         if sub.empty:
             for name in _FRACTIONS:
                 out[f"{name}_{access_type}"] = float("nan")
             continue
-        # Materialize sub with access counts; sort descending by count (matches
-        # pandas quicksort order to align with reference implementation).
-        sub = sub.copy()
-        if col is None:
-            # RW_union: sum of n_w and n_r
-            sub["_access_count"] = sub["n_w"] + sub["n_r"]
-        else:
-            # W or R: use the named column
-            sub["_access_count"] = sub[col]
-        sub = sub.sort_values("_access_count", ascending=False)
-
-        # Cumulative sums: how many unique objects and total accesses up to each
-        # histogram rank (sorted high→low).
-        cum_keys = sub["n_keys"].cumsum()
-        cum_accesses = (sub["_access_count"] * sub["n_keys"]).cumsum()
-
-        n_objects = int(cum_keys.iloc[-1])
-        total = int(cum_accesses.iloc[-1])
-
+        acc_arr = acc.to_numpy()
+        keys_arr = sub["n_keys"].to_numpy()
+        neg_counts, inverse = np.unique(-acc_arr, return_inverse=True)
+        band_keys = np.zeros(len(neg_counts), dtype=np.int64)
+        np.add.at(band_keys, inverse, keys_arr)
+        band_counts = -neg_counts
+        cum_keys = band_keys.cumsum()
+        cum_events = (band_counts * band_keys).cumsum()
+        n_objects = int(cum_keys[-1])
+        total = int(cum_events[-1])
         for name, frac in _FRACTIONS.items():
-            # Find the rank that covers the top-frac cutoff.
             target = math.ceil(frac * n_objects)
-            # searchsorted(side="left") finds the first index where cum_keys ≥ target.
-            idx = int(np.searchsorted(cum_keys.to_numpy(), target, side="left"))
+            idx = int(np.searchsorted(cum_keys, target, side="left"))
+            prev_keys = int(cum_keys[idx - 1]) if idx else 0
+            prev_events = int(cum_events[idx - 1]) if idx else 0
+            events_at_target = prev_events + (target - prev_keys) * int(band_counts[idx])
             out[f"{name}_{access_type}"] = (
-                float(cum_accesses.iloc[idx] / total) if total else 0.0
+                float(events_at_target / total) if total else 0.0
             )
     return out
