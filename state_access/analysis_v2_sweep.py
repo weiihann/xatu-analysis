@@ -42,7 +42,10 @@ def write_image_safe(fig: go.Figure, path: Path, timeout: int = 180) -> None:
     proc.join(timeout)
     if proc.is_alive():
         proc.terminate()
-        proc.join()
+        proc.join(timeout=10)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
         raise RuntimeError(f"chart render timed out: {path}")
     if proc.exitcode != 0:
         raise RuntimeError(f"chart render failed (exit {proc.exitcode}): {path}")
@@ -62,6 +65,7 @@ def load_sweeps() -> pd.DataFrame:
 
 def verify_rows(df: pd.DataFrame) -> None:
     """Per-row identities. Raises AssertionError naming the broken invariant."""
+    has_denom = "denom_block" in df.columns
     for _, r in df.iterrows():
         where = f"anchor={int(r.anchor_block):,} T={int(r.window_days)}"
         assert r.slot_RW_union == r.slot_W + r.slot_R, f"slot additivity broken at {where}"
@@ -77,7 +81,7 @@ def verify_rows(df: pd.DataFrame) -> None:
             f"update coverage partition broken at {where}"
         sfo = r.sfo_first_is_write + r.sfo_first_is_zero_read + r.sfo_first_is_nonzero_read
         assert r.sfo_total_slots == sfo, f"slot first-op partition broken at {where}"
-        if "denom_block" in r:
+        if has_denom:
             assert r.anchor_block - r.denom_block <= 50_400, f"stale denominator at {where}"
 
 
@@ -112,7 +116,7 @@ def _base_fig(title: str, ytitle: str) -> go.Figure:
         legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
     )
     for name, block in FORKS.items():
-        when = block_to_date(block)
+        when = block_to_date(block).strftime("%Y-%m-%d")
         fig.add_vline(x=when, line_dash="dot", line_color="#9E9E9E")
         fig.add_annotation(x=when, y=1.0, yref="paper", text=name, showarrow=False,
                            font=dict(size=10, color="#757575"), yanchor="bottom")
@@ -159,7 +163,9 @@ def render_all(df: pd.DataFrame) -> None:
         fig = _base_fig("W_mixed composition over time (T=365d)", "% of W_mixed")
         for col, (label, color) in _MIXED_COMBOS.items():
             fig.add_trace(go.Scatter(
-                x=d365["date"], y=100 * d365[col] / d365["slot_W_mixed"], name=label,
+                x=d365["date"],
+                y=100 * d365[col] / d365["slot_W_mixed"].where(d365["slot_W_mixed"] != 0),
+                name=label,
                 mode="lines", stackgroup="one", line=dict(color=color, width=0.5),
                 fillcolor=color))
         fig.update_yaxes(range=[0, 100], rangemode=None)
@@ -193,7 +199,8 @@ def render_all(df: pd.DataFrame) -> None:
     fig = _base_fig("R-only accounts non-empty share over time (§8)",
                     "% of R-only accounts")
     _add_window_traces(fig, df, lambda s:
-                       100 * s.res_nonempty_accounts / s.res_total_r, "non-empty")
+                       100 * s.res_nonempty_accounts / s.res_total_r.where(s.res_total_r != 0),
+                       "non-empty")
     charts.append(("sweep_empty_split.png", fig))
 
     for name, fig in charts:
