@@ -1,8 +1,7 @@
 from state_access import config_v2 as cfg
-from state_access.history_config import MERGE_BLOCK
 
 
-def test_sweep_windows_match_v1_grid():
+def test_sweep_windows_grid():
     assert cfg.SWEEP_WINDOWS == [30, 90, 180, 365]
 
 
@@ -20,7 +19,7 @@ def test_anchors_v2_weekly_ascending():
 def test_anchors_v2_floor_keeps_lookback_post_merge():
     for t in cfg.SWEEP_WINDOWS:
         a = cfg.anchors_v2(t)
-        floor = MERGE_BLOCK + t * 7_200
+        floor = cfg.MERGE_BLOCK + t * 7_200
         assert a[0] >= floor            # whole lookback stays post-merge
         assert a[0] - cfg.SWEEP_STEP < floor  # can't fit another anchor below
 
