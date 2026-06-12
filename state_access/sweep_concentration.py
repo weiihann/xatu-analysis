@@ -42,8 +42,10 @@ def concentration_shares(hist: pd.DataFrame) -> dict[str, float]:
             for name in _FRACTIONS:
                 out[f"{name}_{access_type}"] = float("nan")
             continue
-        acc_arr = acc.to_numpy()
-        keys_arr = sub["n_keys"].to_numpy()
+        # int64 is load-bearing: live clickhouse-connect histograms arrive as uint64,
+        # and negating uint64 wraps silently, corrupting the band order.
+        acc_arr = acc.to_numpy(dtype=np.int64)
+        keys_arr = sub["n_keys"].to_numpy(dtype=np.int64)
         neg_counts, inverse = np.unique(-acc_arr, return_inverse=True)
         band_keys = np.zeros(len(neg_counts), dtype=np.int64)
         np.add.at(band_keys, inverse, keys_arr)
