@@ -606,6 +606,7 @@ WITH per_key AS (
     GROUP BY h
 )
 SELECT
+    -- c=n_w_create, u=n_w_update, d=n_w_delete, rz=n_r_zero, rn=n_r_nonzero
     countIf(c + u + d > 0)                              AS W,
     countIf(c + u + d = 0 AND rz + rn > 0)              AS R,
     count()                                             AS RW_union,
@@ -630,7 +631,13 @@ FROM per_key
 
 
 def account_sweep_summary(bn_now: int, days: int) -> str:
-    """One-row W / R / R∪W account summary (same sources as `account_histogram`)."""
+    """One-row W / R / R∪W account summary (same sources as `account_histogram`).
+
+    Writes: balance_diffs, nonce_diffs, contracts (keyed on contract_address). Reads:
+    balance_reads, nonce_reads, relationship-filtered address_appearances. Note
+    `contracts` IS included in W here (unlike `account_first_op`, which drops it as
+    redundant for first-op ordering).
+    """
     bn_lo, bn_hi = _window(bn_now, days)
     return f"""
 WITH per_key AS (
