@@ -565,6 +565,112 @@ GROUP BY relationship
 """
 
 
+def slot_sweep_summary(bn_now: int, days: int) -> str:
+    """One-row scalar summary of the slot typed view for a (anchor, window) cell.
+
+    Same per-key GROUP BY as `slot_typed_histogram`, but the classification that
+    `analysis_v2.q1_warmth_slot_typed` / `_classify_mixed` do in pandas happens in SQL,
+    so the sweep stores ~20 counts instead of a 100k-row histogram per anchor.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH per_key AS (
+    SELECT
+        h,
+        sum(is_w_create) AS c,
+        sum(is_w_update) AS u,
+        sum(is_w_delete) AS d,
+        sum(is_r_zero)   AS rz,
+        sum(is_r_nonzero) AS rn
+    FROM (
+        SELECT
+            cityHash64(address, slot) AS h,
+            toUInt8(from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS is_w_create,
+            toUInt8(from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS is_w_update,
+            toUInt8(from_value != '{_ZERO}' AND to_value =  '{_ZERO}') AS is_w_delete,
+            toUInt8(0) AS is_r_zero,
+            toUInt8(0) AS is_r_nonzero
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT
+            cityHash64(contract_address, slot) AS h,
+            toUInt8(0), toUInt8(0), toUInt8(0),
+            toUInt8(value =  '{_ZERO}') AS is_r_zero,
+            toUInt8(value != '{_ZERO}') AS is_r_nonzero
+        FROM canonical_execution_storage_reads
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+    GROUP BY h
+)
+SELECT
+    countIf(c + u + d > 0)                              AS W,
+    countIf(c + u + d = 0 AND rz + rn > 0)              AS R,
+    count()                                             AS RW_union,
+    countIf(c > 0 AND u = 0 AND d = 0)                  AS W_only_create,
+    countIf(u > 0 AND c = 0 AND d = 0)                  AS W_only_update,
+    countIf(d > 0 AND c = 0 AND u = 0)                  AS W_only_delete,
+    countIf(toUInt8(c > 0) + toUInt8(u > 0) + toUInt8(d > 0) >= 2) AS W_mixed,
+    countIf(c > 0 AND u > 0 AND d = 0)                  AS mixed_cu,
+    countIf(c > 0 AND d > 0 AND u = 0 AND c = 1)        AS mixed_cd1,
+    countIf(c > 0 AND d > 0 AND u = 0 AND c >= 2)       AS mixed_cdm,
+    countIf(u > 0 AND d > 0 AND c = 0)                  AS mixed_ud,
+    countIf(c > 0 AND u > 0 AND d > 0 AND c = 1)        AS mixed_cud1,
+    countIf(c > 0 AND u > 0 AND d > 0 AND c >= 2)       AS mixed_cudm,
+    countIf(c > 0)                                      AS W_any_create,
+    countIf(u > 0)                                      AS W_any_update,
+    countIf(d > 0)                                      AS W_any_delete,
+    countIf(c + u + d = 0 AND rz > 0 AND rn = 0)        AS R_only_zero,
+    countIf(c + u + d = 0 AND rn > 0 AND rz = 0)        AS R_only_nonzero,
+    countIf(c + u + d = 0 AND rz > 0 AND rn > 0)        AS R_mixed
+FROM per_key
+"""
+
+
+def account_sweep_summary(bn_now: int, days: int) -> str:
+    """One-row W / R / R∪W account summary (same sources as `account_histogram`)."""
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH per_key AS (
+    SELECT h, sum(is_w) AS n_w, sum(is_r) AS n_r
+    FROM (
+        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        FROM canonical_execution_balance_diffs
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), 1, 0
+        FROM canonical_execution_nonce_diffs
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(contract_address), 1, 0
+        FROM canonical_execution_contracts
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), 0, 1
+        FROM canonical_execution_balance_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), 0, 1
+        FROM canonical_execution_nonce_reads
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT cityHash64(address), 0, 1
+        FROM canonical_execution_address_appearances
+        WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+          AND relationship IN ({_RELATIONSHIP_LIST})
+    )
+    GROUP BY h
+)
+SELECT
+    countIf(n_w > 0)              AS W,
+    countIf(n_w = 0 AND n_r > 0)  AS R,
+    count()                       AS RW_union
+FROM per_key
+"""
+
+
 def account_histogram(bn_now: int, days: int) -> str:
     """(slice, n_w, n_r, n_keys) over account-address keys for the trailing W-day window.
 
