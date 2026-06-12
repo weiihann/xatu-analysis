@@ -13,6 +13,16 @@ counterfactuals, what an EIP-8188-style tiering scheme would do with it.
 `T` denotes the **trailing window length** in days — to avoid colliding with the writes
 set, the window is always `T`, never `W`.
 
+**EIP-8188 scope note.** As of its June 2026 draft, EIP-8188 records a
+`last_written_block` field on accounts and slots and deliberately introduces **no gas
+changes** — the Active/Inactive tiering gas schedule is left to a separate proposal. The
+policy sections here (§7–§8) model that anticipated tiering layer, with the semantics of
+the original March 2026 draft of the EIP (Active/Inactive **write** pricing by write age,
+tier evaluated before the write, reads unpriced); its calendar-period mechanics
+(`PERIOD_LENGTH`, `INACTIVE_MIN_AGE`) are idealized as a rolling `T`-day window.
+"Under EIP-8188" below is shorthand for "under a write-age tiering scheme built on
+EIP-8188's metadata".
+
 Static snapshot, anchored at block **24,870,000** (mainnet) — the largest round block
 where all four source families (writes, slot reads, account reads, `address_appearances`)
 overlap on the local cluster. Windows: `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object
@@ -25,10 +35,11 @@ types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
 - **R is the reads dimension the `_diffs` tables can't see.** At T=30d, **1.25% of slots
   and 0.46% of accounts** are read-but-not-written in window. At T=365d these grow to
   **10.6% / 4.5%**. By construction R never overlaps W.
-- **The full warm set R∪W is 30–40% larger than W alone** at every T. At T=30d the
-  combined-state warm set is **4.25%** (vs 3.16% for writes alone); at T=365d it's
-  **35.2%** (vs 25.8%). The mass you'd miss with a writes-only definition is consistently
-  **~30%**.
+- **The full warm set R∪W is 32–52% larger than W alone.** The relative gap is largest
+  at small T (+52% at T=1d, +43% at T=7d) and settles to **+32–37% for T ≥ 30d**. At
+  T=30d the combined-state warm set is **4.25%** (vs 3.16% for writes alone); at T=365d
+  it's **35.2%** (vs 25.8%). The mass you'd miss with a writes-only definition is roughly
+  **a third**.
 - **R is much more concentrated than W.** At T=30d the top 1% of objects captures **84%
   of read events** (slots) or **96%** (accounts), versus **62% / 61%** for writes. R-only
   objects are a long tail dominated by one-shot view-call targets — but the head of that
@@ -37,15 +48,17 @@ types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
   creation event** and only **21% have any update**; on a disjoint partition, **62% of W
   slots are create-only** (write was a `0→nonzero` initialization, nothing else in
   window). Most "warm slots" by W's definition are warm because they're being **born**,
-  not modified — state growth, not state churn. EIP-8188 only reprices updates, so the
-  policy-relevant write set is closer to 4% of state at T=365d (update-touching slots),
-  not 25%.
+  not modified — state growth, not state churn. Write-age tiering only reprices updates,
+  so the policy-relevant write set is **5.4% of state** at T=365d (update-touching
+  slots), not 25%.
 - **Slot R is dominated by empty-slot probes.** At T=365d, **93% of R slots had at least
   one read returning `value=0`** ("does this slot exist?" checks). Only **7% of R slots**
   had any read return populated data. The `R_mixed` partition (slots with both zero and
-  nonzero reads) is identically **zero** by structure: an R-only slot has no writes in
-  window, so its value is stable through the window, so all reads return the same value.
-- **EIP-8188 covers update gas very well at the policy-relevant window.** Under per-event
+  nonzero reads) is **near-zero** — 1–2 slots up to T=90d, 0.02% of |R| at T=180d, 0.2%
+  at T=365d. It is not exactly zero because `_diffs` rows are net-per-transaction and
+  exclude rolled-back writes, so a slot whose writes all cancel or revert within their
+  transactions shows no write while its reads expose the intermediate values (§2).
+- **Write-age tiering covers update gas very well at the policy-relevant window.** Under per-event
   semantics (intra-window promotion accounted for), **94% of update SSTORE events at
   T=30d would keep the Active price**; 97% at T=90d. The Inactive premium only affects
   ~3–6% of updates at policy-relevant T.
@@ -87,6 +100,35 @@ written object is also read in the same window:
 With W-only essentially empty, the partition collapses to `W ∪ (R \ W) = R∪W`. That's the
 additive view used throughout.
 
+### Granularity and known gaps
+
+Verified empirically against the source tables (2026-06-12):
+
+- **One row per (transaction, object).** Both `_diffs` and `_reads` are deduplicated per
+  transaction: a `_diffs` row is the **net per-tx transition** of a slot (`from_value` →
+  `to_value` across the whole tx — intra-tx rewrites collapse, and an exact
+  write-then-restore cycle emits no row), and a `_reads` row records one observed value
+  per (tx, slot). "Events" in this report are therefore per-(tx, object) units, not raw
+  opcode executions. For tier-pricing questions this is the natural unit anyway: under
+  EIP-2929, repeat touches within a tx are warm regardless of tier.
+- **Reverted writes are excluded; reverted reads are included.** Failed transactions emit
+  no `_diffs` rows but their `SLOAD`s are recorded in `_reads` (verified on failed txs
+  near the anchor). R counts reads from reverted executions; W reflects only state
+  changes that stuck. This asymmetry (plus net-per-tx diffs) is what makes `R_mixed` (§5)
+  slightly nonzero.
+- **System-call writes are invisible to `_diffs`.** The per-block protocol writes to the
+  EIP-4788 beacon-roots, EIP-2935 history, and EIP-7002/7251 request-queue contracts do
+  not appear in `storage_diffs` (verified: 0 diff rows for the 4788/2935 contracts over
+  101 blocks, while reads of those slots do appear). W misses these slots — tens of
+  thousands, <0.01% of live state; reads of them surface in R (the single R_mixed slot at
+  T=1d is the EIP-7251 contract's slot 0).
+- **Consensus-layer withdrawals are not in `balance_diffs`.** A withdrawal recipient
+  credited at the anchor block has no `balance_diffs` row there (verified). Unique
+  withdrawal addresses are ~8.5k / 33k / 69k at T=1/30/365d — at most ~1.2% / 0.2% /
+  0.07% of |W| accounts — so withdrawal-only accounts are missing from W, with negligible
+  effect on the account-level results. Fee-recipient credits **are** captured (per-tx
+  rows verified at the anchor block).
+
 ### Denominators
 
 Set sizes are reported as a share of live state. Live-state denominators come from
@@ -124,7 +166,7 @@ Set sizes are reported as a share of live state. Live-state denominators come fr
 | 60  |  7.60% |  0.69% |  8.29% |
 | 90  | 11.46% |  0.88% | 12.34% |
 | 180 | 19.04% |  2.12% | 21.16% |
-| 365 | 27.35% |  4.49% | 31.84% |
+| 365 | 27.35% |  4.48% | 31.83% |
 
 **Combined** — pooling slots + accounts against the combined denominator (1.93B):
 
@@ -134,7 +176,7 @@ Set sizes are reported as a share of live state. Live-state denominators come fr
 | 7   |  0.74% |  0.32% |  1.05% |
 | 14  |  1.52% |  0.57% |  2.10% |
 | 30  |  3.16% |  1.10% |  4.25% |
-| 60  |  6.13% |  2.02% |  8.15% |
+| 60  |  6.13% |  2.01% |  8.15% |
 | 90  |  8.66% |  2.81% | 11.47% |
 | 180 | 16.19% |  5.17% | 21.35% |
 | 365 | 25.81% |  9.41% | 35.22% |
@@ -149,19 +191,20 @@ Two observations:
    R-slots = 10.6% vs R-accounts = 4.5%. Slot-level reads have a deeper unread tail
    (every contract storage has view-only parameters); account-level reads cluster on a
    smaller universe of popular contracts.
-2. **R grows faster than W as T increases.** For slots, R/W is 0.67× at T=1d but 0.42×
-   at T=365d — R adds more relative to W at small T. For accounts, R/W is 0.19× at T=1d
+2. **W grows faster than R as T increases.** For slots, R/W is 0.67× at T=1d but 0.42×
+   at T=365d — R adds the most relative to W at small T. For accounts, R/W is 0.19× at T=1d
    and 0.16× at T=365d — the read-only account tail grows much slower than writes. Both
    ratios are bounded above zero, so reads always add something.
 
 ## 4. Write structure — slot W by value transition
 
-For storage slots, the writes carry a value transition that's EIP-8188-relevant:
-`create` (0→nonzero, ~20k gas, always Inactive-priced under EIP-8188), `update`
-(X→Y nonzero→nonzero, ~5k gas, what the policy actually reprices), `delete`
-(nonzero→0, refund). A single slot can have multiple write types in window (created
-early, updated later); the disjoint partition below picks slots whose writes are ALL of
-one type ("create-only" etc.) and lumps the rest into "mixed".
+For storage slots, the writes carry a value transition that's tiering-relevant:
+`create` (0→nonzero, ~20k gas — a brand-new slot has no prior write age, so tiering
+can't discount it), `update` (X→Y nonzero→nonzero, ~5k gas, what write-age tiering
+actually reprices), `delete` (nonzero→0, refund). Write types are net per-tx transitions
+(§2). A single slot can have multiple write types in window (created early, updated
+later); the disjoint partition below picks slots whose writes are ALL of one type
+("create-only" etc.) and lumps the rest into "mixed".
 
 ### Slot W partitioned by transition type (% of live state)
 
@@ -192,17 +235,17 @@ one event of each type — the rows do not sum to 100%.
 | 365 | 87.8% | 21.4% | 20.8% |
 
 **Read this carefully.** Of the 25.4% of live slots in |W| at T=365d:
-- **88% have at least one creation event** (76% are pure create-only); the slot is in W
+- **88% have at least one creation event** (62% are pure create-only); the slot is in W
   primarily because it was *initialized* in window.
 - **21% have at least one update**; the EIP-8188-relevant subset of W.
 - **21% have at least one deletion**.
 
-The update fraction of |W| **stays remarkably stable around 21–24%** across windows from
-7d to 365d. So **|W ∩ updates| ≈ 21% × |W|** at every T of interest. At T=30d that's
-21% × 2.93% = **0.7% of live state**; at T=365d, 21% × 25.43% = **5.3% of live state**.
-These are the slots EIP-8188 would actually reprice.
+The update fraction of |W| **stays remarkably stable around 20–24%** across windows from
+14d to 365d (28.7% at T=7d). So **|W ∩ updates| ≈ 21% × |W|** at every T of interest. At
+T=30d that's 23.5% × 2.93% = **0.7% of live state**; at T=365d, 21.4% × 25.43% =
+**5.4% of live state**. These are the slots write-age tiering would actually reprice.
 
-The create-only fraction *grows* with T (60% → 76% over 1d → 365d) because the longer the
+The create-only fraction *grows* with T (45% → 62% over 1d → 365d) because the longer the
 window, the more newly-created slots accumulate without subsequent activity. Slot creation
 is a one-shot event by nature.
 
@@ -272,12 +315,16 @@ lifecycle within window.
 
 Slot reads split by the returned `value`: `zero` (the slot was empty when read — an
 "is this slot set?" probe) vs `nonzero` (a populated read returning real data). For R the
-partition is trivially clean: an R-only slot has no writes in window, so its value is
-stable, so all reads return the same value — `R_mixed = 0` everywhere.
+partition is almost clean: an R-only slot has no surviving net writes in window, so its
+value is stable and nearly all of its reads return one value. `R_mixed` is 1–2 slots up
+to T=90d, then 0.02% of |R| at T=180d and 0.2% at T=365d — the leak comes from
+net-per-tx diffs and reverted writes exposing intermediate values to reads (§2); its
+T=180d head is dominated by busy token-balance slots (USDT, USDC) whose writes cancel
+within transactions.
 
 ### Slot R partitioned by returned value (% of live state)
 
-R_mixed is omitted (always zero). Stacked total = R.
+R_mixed is omitted (≤0.2% of |R| everywhere). Stacked total ≈ R, exact to within R_mixed.
 
 | T (days) | zero-only | nonzero-only | R |
 |---:|---:|---:|---:|
@@ -298,7 +345,7 @@ R_mixed is omitted (always zero). Stacked total = R.
 | 7   | 78.4% | 21.6% |
 | 30  | 83.0% | 17.0% |
 | 90  | 88.9% | 11.1% |
-| 365 | 92.9% |  7.3% |
+| 365 | 92.7% |  7.1% |
 
 **The zero-share grows monotonically with T**, reaching 93% at T=365d. So:
 
@@ -320,7 +367,8 @@ R_mixed is omitted (always zero). Stacked total = R.
 ## 6. Concentration — top-N share of accesses
 
 For each `(access_set, T, object_type)`, the share of access events captured by the top-1%
-and top-10% of objects (denominator: objects in the access set).
+and top-10% of objects (denominator: objects in the access set; access events are
+per-(tx, object) units — §2).
 
 ![Concentration top-1% — slots](data/v2/q3_concentration_top1_slot.png)
 ![Concentration top-10% — slots](data/v2/q3_concentration_top10_slot.png)
@@ -351,9 +399,9 @@ Three readings:
    of slot accesses on the top 1% at T=365d; for accounts the figure is ~98%. A handful of
    popular contracts absorb essentially all the read pressure on accounts.
 2. **Concentration grows with T.** Wider windows pull in more tail keys that themselves get
-   few accesses, so the head's relative weight rises monotonically. The effect is sharpest
-   going from T=1d to T=30d (~14pp for slot R; ~17pp for account R); past T=30d the gain
-   flattens.
+   few accesses, so the head's relative weight rises with T (R-only ticks down slightly
+   between T=180d and 365d). The effect is sharpest going from T=1d to T=30d (~18pp for
+   slot R; ~17pp for account R); past T=30d the gain flattens.
 3. **Accounts concentrate far more tightly than slots.** Account R-only at T=30d: top-1%
    captures 96% of accesses. Slot R-only at T=30d: 84%. Read traffic on accounts is
    dominated by an extraordinarily small set of popular contracts (likely DEX routers,
@@ -376,8 +424,9 @@ measurement below promotes the slot intra-window.
 
 ### Definition
 
-For each window `[anchor − T·7200, anchor]`, classify every update SSTORE event
-(`from_value ≠ 0 ∧ to_value ≠ 0`) as **warm** or **cold**:
+For each window `[anchor − T·7200, anchor]`, classify every update event
+(`from_value ≠ 0 ∧ to_value ≠ 0`; one net transition per (tx, slot) — §2) as **warm** or
+**cold**:
 
 - **warm** — at least one `create` (`0 → nonzero`) or `update` event happened earlier on
   the same slot at an earlier event-order within the window.
@@ -439,8 +488,11 @@ The bad-UX set is **objects whose first in-window event is a nonzero read**:
 - For an account, "nonzero read" means `balance_reads` returning balance > 0 or
   `nonce_reads` returning nonce > 0 (empty accounts don't have a period either).
 
-A write or a zero read as the first event has no policy cost: writes already bump the
-period under base EIP-8188, and zero reads target objects that don't exist yet.
+A write or a zero read as the first event has no policy cost: writes already refresh the
+write-age metadata under base EIP-8188, and zero reads target objects that don't exist
+yet. (Current EIP-8188 explicitly rejects read-side bumping — a read that rewrote the
+trie leaf would carry write-equivalent cost and break STATICCALL purity — so this section
+is strictly a counterfactual.)
 
 ### Method
 
@@ -570,7 +622,7 @@ The clearest threads worth pulling next:
   heavy concentration (~88% top-1% for slots, ~98% for accounts). Worth a dedicated
   drill-down: which contracts dominate R-only? What's the contract-class breakdown of the
   R-only head?
-- **Historical sweep.** Snapshot is one anchor (24,870,000, late-Apr 2026). Sweeping weekly
+- **Historical sweep.** Snapshot is one anchor (24,870,000, 2026-04-13). Sweeping weekly
   over the post-Merge range would tell us whether the R/W ratio is stable, whether R's
   share grew after Dencun (blob / calldata changes), and whether the R-only-account
   concentration spike is recent.
@@ -750,7 +802,8 @@ LIMIT 1
 ```
 
 At the anchor: 1,552,604,459 slots, 379,632,901 accounts, 1,932,237,360 combined
-(ethpandaops profile — the local cluster's snapshot of this table is empty).
+(queried via the ethpandaops profile; the local cluster's copy of this table has since
+been populated and returns identical values at the anchor).
 
 ### Warm-update coverage (§7)
 
@@ -939,3 +992,47 @@ Reproduce: `uv run python -m state_access.collect_v2 && uv run python -m state_a
 `collect_v2` is resumable per `(T, object_type)` cell; delete a histogram parquet to force a
 re-pull. Verification checks (additivity `|R∪W|=|W|+|R|`, partition sum, monotonicity) live
 in `analysis_v2.run_one`.
+
+## Verification Summary
+
+Fact-checked 2026-06-12: every numeric table was independently recomputed from the
+committed raw parquets (not via `analysis_v2.py`), the SQL appendix was diffed against
+`queries_v2.py`, the EIP-8188 characterization was checked against the EIP text (current
+and original drafts), and the source-table semantics were probed directly on the
+ClickHouse clusters.
+
+**Confirmed (unchanged):** all §3 warmth tables (one rounding cell aside), the §4
+partition and touch-rate tables, the full W_mixed decomposition (both tables), the §5
+%-of-state table, the §6 concentration tables, the §7 update-coverage table (exact raw
+counts), both §8 first-op tables, the §8 R-only empty/non-empty table (exact counts), the
+live-state denominators (re-queried: identical on both clusters), the anchor-coverage
+claims (`_diffs` end at 24,873,999; `_reads`/`address_appearances` at 25,189,620), the
+`relationship` filter (covers every non-ERC value present in the data), the first-op
+totals (match histogram R∪W exactly at every T), and fee-recipient capture in
+`balance_diffs`.
+
+**Corrected:**
+
+- EIP-8188 framing: the June 2026 draft is metadata-only (`last_written_block`, no gas
+  changes); added the scope note in the preamble and reworded "EIP-8188
+  reprices/prices..." claims to refer to the write-age tiering layer it enables.
+- "R∪W is 30–40% larger than W at every T" → 32–52% (+52% at T=1d; +32–37% for T≥30d).
+- "policy-relevant write set closer to 4% of state at T=365d" → 5.4%.
+- "R_mixed is identically zero by structure" → near-zero but real: 20,221 slots (0.02% of
+  |R|) at T=180d, 334,842 (0.2%) at T=365d; §5 T=365d shares 92.9/7.3 → 92.7/7.1.
+  Root cause (verified): net-per-tx diffs + reverted-write exclusion; the T=1d R_mixed
+  slot is the EIP-7251 system contract, the T=180d head is USDT/USDC balance slots.
+- §4 "(76% are pure create-only)" → 62%; "(60% → 76% over 1d→365d)" → 45% → 62%;
+  "stable 21–24% from 7d" → 20–24% from 14d (28.7% at 7d); "5.3% of live state" → 5.4%.
+- §3 "R grows faster than W as T increases" → inverted (W grows faster; R/W falls).
+- §6 "rises monotonically" → R-only dips slightly at 365d; "~14pp for slot R" → ~18pp.
+- Rounding: accounts T=365d R 4.49→4.48, R∪W 31.84→31.83; combined T=60d R 2.02→2.01.
+- Anchor date "late-Apr 2026" → 2026-04-13 (block timestamp).
+- "local `execution_state_size` is empty" → now populated, agrees with ethpandaops.
+- Added §2 "Granularity and known gaps": per-(tx, object) event units, reverted-read /
+  reverted-write asymmetry, missing system-call writes (EIP-4788/2935/7002/7251), missing
+  consensus-layer withdrawal credits (~8.5k/33k/69k unique addresses at T=1/30/365d).
+
+**Unverifiable from committed artifacts:** the §7 static-check figure (84.8% at T=30d) has
+no committed parquet or driver; the §8 claim that nonzero-read-first accounts are mostly
+view-call targets is an interpretation, not measured.

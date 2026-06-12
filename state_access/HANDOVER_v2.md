@@ -13,9 +13,11 @@ below is true as of 2026-06-12.
 ## 1. What this project is
 
 Measures Ethereum mainnet **state access** over trailing time windows, separating
-**writes** from **reads**, and interprets it against **EIP-8188** (activeness-based state
-tiering: state touched within an "active window" is cheap/Active, stale state is
-Inactive/expensive).
+**writes** from **reads**, and interprets it against **EIP-8188-based write-age tiering**
+(state written within an "active window" is cheap/Active, stale state is
+Inactive/expensive). NOTE: the June 2026 draft of EIP-8188 records `last_written_block`
+metadata only and defers the tiering gas schedule to a separate proposal — see the scope
+note at the top of `REPORT_v2.md`.
 
 Two prior analyses exist and are **superseded** by v2 (kept for reference, not deleted):
 - `analysis.py` / `REPORT.md` — write-only (uses `_diffs` tables only). The original
@@ -98,10 +100,15 @@ missing blocks at runtime) — safe to re-run, but unnecessary.
 | writes (slots) | `canonical_execution_storage_diffs` |
 | reads (slots) | `canonical_execution_storage_reads` |
 | reads (accounts) | `canonical_execution_balance_reads`, `…_nonce_reads`, `…_address_appearances` (relationships `{call_from, call_to, tx_from, tx_to, miner_fee, factory, create, suicide_refund, suicide}`; ERC-20/721 excluded) |
-| denominators | `execution_state_size` (on **ethpandaops** — local copy is empty) |
+| denominators | `execution_state_size` (queried via **ethpandaops**; local copy is now populated and agrees) |
 
 `_diffs` end ~24.87M on local; `_reads`/`address_appearances` reach ~25.19M. This is why
 the anchor is capped at 24.87M (a later anchor needs a `_diffs` backfill first).
+
+Data semantics (verified 2026-06-12, see REPORT_v2.md §2 "Granularity and known gaps"):
+`_diffs` and `_reads` are one row per (tx, object); diffs are net-per-tx and exclude
+reverted writes, reads include reverted reads; system-call writes (EIP-4788/2935/
+7002/7251) and consensus-layer withdrawal credits are absent from `_diffs`.
 
 ---
 
@@ -203,10 +210,10 @@ sections, keep that — describe v2 on its own terms.
 
 ## 7. Key findings (so you know what's established)
 
-- Warm set R∪W is ~30% bigger than writes-alone at every T (reads matter).
+- Warm set R∪W is ~32–52% bigger than writes-alone (≈⅓ for T≥30d; reads matter).
 - Slot W is **mostly creations, not updates** — 62% create-only at T=365d; only ~21% of W
-  has any update. EIP-8188 only reprices updates, so policy-relevant write set ≈ 5% of
-  state at T=365d, not 25%.
+  has any update. Write-age tiering only reprices updates, so policy-relevant write set
+  ≈ 5.4% of state at T=365d, not 25%.
 - Slot R is **93% empty-slot probes** (SLOAD returning 0). Only ~7% is populated reads.
 - `W_mixed` is dominated by **C+D 1-cycle** (born+died once in window — ephemeral state),
   2.86% of live state at T=365d.
