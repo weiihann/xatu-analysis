@@ -8,11 +8,14 @@ the common envelope's natural round anchor is 24,870,000 — same as the origina
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from state_access.config import DATA_DIR
 
 ANCHOR_BLOCK_V2 = 24_870_000
+
+# First post-merge block. The full-history sweep sources read tables from ethpandaops
+# below this (local `_reads` coverage starts at the merge) and from the local node above.
+MERGE_BLOCK = 15_537_394
 
 # Trailing-window lengths (days).
 WINDOWS_V2 = [1, 7, 14, 30, 60, 90, 180, 365]

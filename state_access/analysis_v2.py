@@ -22,7 +22,6 @@ from typing import Literal
 
 import pandas as pd
 import plotly.graph_objs as go
-from plotly.subplots import make_subplots
 
 from state_access.config import DATA_DIR
 from state_access.config_v2 import DATA_DIR_V2
@@ -462,7 +461,7 @@ def run_slot_mixed_decomp(totals: dict[str, int]) -> None:
     fig.write_image(DATA_DIR_V2 / "q1_warmth_slot_mixed_decomp.png", scale=2)
     _show(fig)
 
-    print(f"\n>>> W_mixed decomposition (share of W_mixed per T):")
+    print("\n>>> W_mixed decomposition (share of W_mixed per T):")
     pivot = decomp.pivot(index="window_days", columns="combo",
                         values="share_of_mixed").fillna(0).reindex(
                             columns=_MIXED_COMBOS_ORDER, fill_value=0)
@@ -646,8 +645,13 @@ def run_slot_typed(totals: dict[str, int]) -> None:
     _show(fig_r)
 
     last = q1t.iloc[-1]
-    w_share = lambda k: 100 * last[k] / last["W"] if last["W"] else 0
-    r_share = lambda k: 100 * last[k] / last["R"] if last["R"] else 0
+
+    def w_share(k: str) -> float:
+        return 100 * last[k] / last["W"] if last["W"] else 0
+
+    def r_share(k: str) -> float:
+        return 100 * last[k] / last["R"] if last["R"] else 0
+
     print(f"  W=365d: |W|={last['W']:,}; "
           f"create-touching {w_share('W_any_create'):.1f}%, "
           f"update-touching {w_share('W_any_update'):.1f}%, "
@@ -725,6 +729,127 @@ def run_combined(totals: dict[str, int]) -> None:
           f"{q1c['RW_union_pct'].max():.2f}% (W={q1c.iloc[-1]['window_days']}d)")
 
 
+# Display order + colors for the full-history event-mix charts.
+_HISTORY_WRITE_GROUPS = {
+    "slot_write": ["create", "update", "delete"],
+    "account_balance_write": ["fund", "adjust", "drain"],
+    "account_nonce_write": ["first_use", "subsequent"],
+    "account_contract_create": ["create"],
+}
+_HISTORY_READ_GROUPS = {
+    "slot_read": ["zero", "nonzero"],
+    "account_balance_read": ["zero", "nonzero"],
+    "account_nonce_read": ["zero", "nonzero"],
+    "account_appearance_read": None,  # metrics are the relationships; take from data
+}
+_HISTORY_METRIC_COLORS = [
+    "#1976D2", "#FBC02D", "#D32F2F", "#388E3C", "#7B1FA2", "#E65100",
+    "#00838F", "#5D4037", "#90CAF9", "#9E9E9E",
+]
+
+
+def _history_totals(df: pd.DataFrame) -> pd.DataFrame:
+    """Sum chunk rows to per-(kind, metric) totals, plus pre/post-merge sub-totals."""
+    from state_access.config_v2 import MERGE_BLOCK
+    df = df.copy()
+    df["era"] = df["bn_hi"].apply(lambda h: "pre_merge" if h < MERGE_BLOCK else "post_merge")
+    total = df.groupby(["kind", "metric"], as_index=False)["n"].sum()
+    era = df.pivot_table(index=["kind", "metric"], columns="era", values="n",
+                         aggfunc="sum", fill_value=0).reset_index()
+    out = total.merge(era, on=["kind", "metric"])
+    for col in ("pre_merge", "post_merge"):
+        if col not in out.columns:
+            out[col] = 0
+    return out
+
+
+def _verify_history_tiling(df: pd.DataFrame) -> None:
+    """Each kind's chunk ranges must tile [0, anchor] exactly (no gap, no overlap)."""
+    from state_access.config_v2 import ANCHOR_BLOCK_V2
+    for kind, sub in df.groupby("kind"):
+        ranges = sorted(set(zip(sub["bn_lo"], sub["bn_hi"])))
+        prev_hi = -1
+        for lo, hi in ranges:
+            assert lo == prev_hi + 1, f"{kind}: gap/overlap at [{lo}, {hi}] after {prev_hi}"
+            prev_hi = hi
+        assert prev_hi == ANCHOR_BLOCK_V2, f"{kind}: tiling ends at {prev_hi}"
+
+
+def _plot_history_mix(totals: pd.DataFrame, kinds: dict, title: str) -> go.Figure:
+    """One 100%-stacked bar per kind; shares of that kind's (non-total) events."""
+    fig = go.Figure()
+    seen_metrics: list[str] = []
+    for kind, order in kinds.items():
+        sub = totals[(totals["kind"] == kind) & (totals["metric"] != "total")]
+        metrics = order if order else sorted(sub["metric"], key=lambda m: -int(
+            sub.loc[sub["metric"] == m, "n"].iloc[0]))
+        denom = sub["n"].sum()
+        for m in metrics:
+            n = int(sub.loc[sub["metric"] == m, "n"].sum())
+            if m not in seen_metrics:
+                seen_metrics.append(m)
+            fig.add_trace(go.Bar(
+                x=[kind], y=[100 * n / denom if denom else 0], name=m,
+                legendgroup=m, showlegend=(kind == next(iter(kinds)) or order is None),
+                marker=dict(color=_HISTORY_METRIC_COLORS[
+                    seen_metrics.index(m) % len(_HISTORY_METRIC_COLORS)]),
+            ))
+    fig.update_layout(
+        barmode="stack",
+        title=title,
+        xaxis=dict(title="event source"),
+        yaxis=dict(title="% of source's events", ticksuffix="%", range=[0, 100],
+                   gridcolor="lightgray"),
+        template="plotly_white", width=1100, height=560,
+        legend=dict(x=1.02, y=1.0, xanchor="left"),
+    )
+    return fig
+
+
+def run_history_event_totals(totals_live: dict[str, int]) -> None:
+    """Full-history (genesis → anchor) event mix for writes and reads (§4/§5 extension)."""
+    p = DATA_DIR_V2 / "history_event_totals.parquet"
+    if not p.exists():
+        print(f"  no history event totals at {p}; run collect_v2_history first")
+        return
+    df = pd.read_parquet(p)
+    _verify_history_tiling(df)
+    totals = _history_totals(df)
+    totals.to_parquet(DATA_DIR_V2 / "history_event_totals_summary.parquet", index=False)
+
+    print("\n>>> full-history event totals (genesis → anchor):")
+    for kind, sub in totals.groupby("kind"):
+        named = sub[sub["metric"] != "total"]
+        denom = int(named["n"].sum())
+        tot_row = sub[sub["metric"] == "total"]
+        residual = int(tot_row["n"].iloc[0]) - denom if len(tot_row) else 0
+        parts = ", ".join(
+            f"{r['metric']}={int(r['n']):,} ({100*r['n']/denom:.1f}%)"
+            for _, r in named.sort_values("n", ascending=False).iterrows())
+        extra = f"  [residual vs total: {residual:,}]" if residual else ""
+        print(f"  {kind:24s} {parts}{extra}")
+
+    # Soft sanity check: net slot creations ≈ live slots at the anchor.
+    sw = totals[totals["kind"] == "slot_write"].set_index("metric")["n"]
+    net = int(sw["create"] - sw["delete"])
+    live = int(totals_live["storages"])
+    print(f"  sanity: slot creates−deletes = {net:,} vs live slots {live:,} "
+          f"({100*net/live:.1f}%) — approximate (net-per-tx, system writes missing)")
+
+    fig_w = _plot_history_mix(
+        totals, _HISTORY_WRITE_GROUPS,
+        "Full-history WRITE event mix (genesis → anchor)"
+        "<br><sub>per-source 100%-stacked; events are net per-(tx, object) units</sub>")
+    fig_w.write_image(DATA_DIR_V2 / "history_event_totals_writes.png", scale=2)
+    _show(fig_w)
+    fig_r = _plot_history_mix(
+        totals, _HISTORY_READ_GROUPS,
+        "Full-history READ event mix (genesis → anchor)"
+        "<br><sub>pre-merge reads sourced from ethpandaops; post-merge from the local node</sub>")
+    fig_r.write_image(DATA_DIR_V2 / "history_event_totals_reads.png", scale=2)
+    _show(fig_r)
+
+
 def main() -> None:
     DATA_DIR_V2.mkdir(parents=True, exist_ok=True)
     totals = _load_totals()
@@ -740,6 +865,7 @@ def main() -> None:
     run_slot_first_op()
     run_account_first_op()
     run_account_r_empty_split()
+    run_history_event_totals(totals)
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
 

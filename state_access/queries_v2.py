@@ -452,6 +452,119 @@ FROM per_slot
 """
 
 
+# ---------------------------------------------------------------------------
+# Full-history event totals (additive countIf aggregates — no per-key GROUP BY).
+#
+# Each builder takes an inclusive block range `(bn_lo, bn_hi)` and returns a single
+# aggregate row (the appearance builder returns one row per relationship). Counts are
+# additive across disjoint ranges, so the collect driver can chunk arbitrarily and a
+# timed-out chunk can be split and retried losslessly. Every builder also returns
+# `n_total` so the analysis can verify the metric partition sums to the row count.
+# ---------------------------------------------------------------------------
+
+
+def slot_write_event_totals(bn_lo: int, bn_hi: int) -> str:
+    """Slot write events by value transition (same definitions as `slot_typed_histogram`)."""
+    return f"""
+SELECT
+    countIf(from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS n_create,
+    countIf(from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS n_update,
+    countIf(from_value != '{_ZERO}' AND to_value =  '{_ZERO}') AS n_delete,
+    count() AS n_total
+FROM canonical_execution_storage_diffs
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def slot_read_event_totals(bn_lo: int, bn_hi: int) -> str:
+    """Slot read events by returned value (zero = empty-slot probe, nonzero = populated)."""
+    return f"""
+SELECT
+    countIf(value =  '{_ZERO}') AS n_zero,
+    countIf(value != '{_ZERO}') AS n_nonzero,
+    count() AS n_total
+FROM canonical_execution_storage_reads
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_balance_write_totals(bn_lo: int, bn_hi: int) -> str:
+    """Balance-diff events by transition: fund (0→x) / adjust (x→y) / drain (x→0).
+
+    `from_value`/`to_value` are UInt256 — only compared against 0, never aggregated.
+    """
+    return f"""
+SELECT
+    countIf(from_value =  0 AND to_value != 0) AS n_fund,
+    countIf(from_value != 0 AND to_value != 0) AS n_adjust,
+    countIf(from_value != 0 AND to_value =  0) AS n_drain,
+    count() AS n_total
+FROM canonical_execution_balance_diffs
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_nonce_write_totals(bn_lo: int, bn_hi: int) -> str:
+    """Nonce-diff events: first use (from 0 — fresh EOA tx or contract init) vs subsequent."""
+    return f"""
+SELECT
+    countIf(from_value = 0)  AS n_first_use,
+    countIf(from_value != 0) AS n_subsequent,
+    count() AS n_total
+FROM canonical_execution_nonce_diffs
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_contract_create_totals(bn_lo: int, bn_hi: int) -> str:
+    """Contract-creation events (one row per deployment in `contracts`)."""
+    return f"""
+SELECT count() AS n_create, count() AS n_total
+FROM canonical_execution_contracts
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_balance_read_totals(bn_lo: int, bn_hi: int) -> str:
+    """Balance-read events by observed value (zero vs nonzero)."""
+    return f"""
+SELECT
+    countIf(balance =  0) AS n_zero,
+    countIf(balance != 0) AS n_nonzero,
+    count() AS n_total
+FROM canonical_execution_balance_reads
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_nonce_read_totals(bn_lo: int, bn_hi: int) -> str:
+    """Nonce-read events by observed value (zero vs nonzero)."""
+    return f"""
+SELECT
+    countIf(nonce =  0) AS n_zero,
+    countIf(nonce != 0) AS n_nonzero,
+    count() AS n_total
+FROM canonical_execution_nonce_reads
+WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+"""
+
+
+def account_appearance_read_totals(bn_lo: int, bn_hi: int) -> str:
+    """Appearance-read events per relationship (filtered to `READ_RELATIONSHIPS`).
+
+    Long output: one row per relationship present in the range. The driver maps the
+    relationship to the metric name.
+    """
+    return f"""
+SELECT relationship AS metric, count() AS n
+FROM canonical_execution_address_appearances
+WHERE meta_network_name = '{NETWORK}'
+  AND block_number BETWEEN {bn_lo} AND {bn_hi}
+  AND relationship IN ({_RELATIONSHIP_LIST})
+GROUP BY relationship
+"""
+
+
 def account_histogram(bn_now: int, days: int) -> str:
     """(slice, n_w, n_r, n_keys) over account-address keys for the trailing W-day window.
 

@@ -311,6 +311,56 @@ Three things worth reading off:
 birth-death cycles in window" pattern is real but small — most mixed slots have a single
 lifecycle within window.
 
+### Write structure over the entire chain history
+
+The windowed views above classify *objects*; this section counts *events* over the whole
+chain — every write event from the first state activity (block ~46k, July 2015) to the
+anchor. Event counts are additive, so the sweep runs in 1M-block chunks (writes entirely
+on the local node — the `_diffs` tables are full-history there) and sums. Events are net
+per-(tx, object) units (§2).
+
+**Slot write events** (9.20B total):
+
+| transition | events | share | pre-merge share | post-merge share |
+|---|---:|---:|---:|---:|
+| update (x→y) | 6,109,404,842 | **66.4%** | 62.4% | 69.4% |
+| create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
+| delete (x→0) |   765,554,231 |  8.3% |  8.6% |  8.1% |
+
+**Account write events:**
+
+| source | metric | events | share | pre / post share |
+|---|---|---:|---:|---|
+| balance_diffs (8.55B) | adjust (x→y) | 7,965,568,085 | **93.1%** | 92.5% / 93.7% |
+| | fund (0→x) | 385,657,967 | 4.5% | 4.7% / 4.3% |
+| | drain (x→0) | 203,518,204 | 2.4% | 2.7% / 2.0% |
+| nonce_diffs (3.42B) | subsequent | 3,043,409,094 | **89.0%** | 89.0% / 88.9% |
+| | first use (from 0) | 376,865,812 | 11.0% | 11.0% / 11.1% |
+| contracts | creations | 100,078,703 | — | 51.3M pre / 48.8M post |
+
+(`balance_diffs` also contains 87.5M `0→0` rows — zero-value touches, 1.0% of the table —
+excluded from the shares above.)
+
+![Full-history write event mix](data/v2/history_event_totals_writes.png)
+
+Three readings:
+
+1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
+   slot write events ever are updates, yet 62% of slots written in a 365d window are
+   create-only (§4 above). Both are true at once: updates concentrate on a small hot set
+   of slots hit over and over, while creations contribute exactly one event each across an
+   enormous population. Which framing matters depends on the question — gas spent in
+   blocks tracks the event mix; state growth and tier-population tracks the object mix.
+2. **The mix is remarkably stable across eras.** Pre-merge vs post-merge moves the update
+   share by only ~7pp (62.4% → 69.4%) over seven years of regime change; the balance and
+   nonce mixes barely move at all. The structure of write traffic is a property of how
+   contracts use storage, not of any fee regime.
+3. **A third of all slots ever created have been deleted.** 766M deletes against 2.32B
+   creates — and the accounting closes: creates − deletes = 1.558B vs 1.553B live slots at
+   the anchor (**100.4%**, the 0.4% residual being net-per-tx granularity and the missing
+   system-call writes of §2). State that "dies" is a large recurring flow, consistent with
+   the C+D ephemeral-lifecycle pattern in the W_mixed decomposition.
+
 ## 5. Read structure — slot R by returned value
 
 Slot reads split by the returned `value`: `zero` (the slot was empty when read — an
@@ -363,6 +413,56 @@ R_mixed is omitted (≤0.2% of |R| everywhere). Stacked total ≈ R, exact to wi
   populated reads scale with the small set of legitimately read-only state.
 
 ![Slot R partition](data/v2/q1_warmth_slot_R_typed.png)
+
+### Read structure over the entire chain history
+
+The same full-history event sweep, read side. Pre-merge reads come from the ethpandaops
+cluster (local `_reads` coverage starts at the merge); post-merge from the local node.
+Cross-cluster counts agree to ~0.1% (ReplacingMergeTree dedup state), which bounds the
+noise here.
+
+**Slot read events** (23.69B total — 2.6× the slot write events):
+
+| returned value | events | share | pre-merge share | post-merge share |
+|---|---:|---:|---:|---:|
+| nonzero | 16,552,716,483 | **69.9%** | 70.2% | 69.7% |
+| zero | 7,138,221,664 | 30.1% | 29.8% | 30.3% |
+
+**Account read events:**
+
+| source | metric | events | share |
+|---|---|---:|---:|
+| balance_reads (15.10B) | nonzero | 9,845,422,896 | **65.2%** |
+| | zero | 5,251,717,095 | 34.8% |
+| nonce_reads (13.64B) | nonzero | 13,637,765,012 | 100% (see caveat) |
+| address_appearances (41.98B) | call_to / call_from | 15.74B each | 37.5% each |
+| | tx_from / miner_fee / tx_to | 3.39B each | 8.1% each |
+| | factory / create | ~100M each | 0.24% each |
+| | suicide / suicide_refund | ~60M each | 0.14% each |
+
+> Caveat: `nonce_reads.nonce` is **never zero** anywhere in the data (min = 1 across all
+> history; 53% of reads in a recent sample return exactly 1) — the recorded value is
+> evidently the sender's post-increment nonce. The zero/nonzero split is therefore
+> uninformative for nonce reads. This does not contaminate §8's empty-account split:
+> R-only accounts have no nonce reads at all (their nonce is never consulted), which that
+> section already documents.
+
+![Full-history read event mix](data/v2/history_event_totals_reads.png)
+
+Three readings:
+
+1. **Read traffic is populated-read-dominated — again the inverse of the object view.**
+   70% of all SLOADs ever return data, yet 93% of R-only slots at T=365d are zero-only
+   probes (§5 above). Empty probes touch many distinct slots roughly once each; populated
+   reads hammer a small set of config/oracle/balance slots over and over. Same
+   events-vs-objects inversion as the write side, same mechanism.
+2. **The read mix is essentially era-invariant** — 70.2% vs 69.7% nonzero across the
+   merge. Reads outnumber writes ~2.6:1 for slots and ~6:1 for accounts (70.7B account
+   read events vs 12.1B account write events), quantifying the EIP-8188 rationale that
+   read repricing would touch far more operations than write repricing.
+3. **SELFDESTRUCT activity collapsed post-merge.** `suicide` appearances are 0.34% of
+   pre-merge appearance events but 0.02% post-merge — the visible footprint of EIP-3529
+   (refund removal) and EIP-6780 (same-tx-only SELFDESTRUCT).
 
 ## 6. Concentration — top-N share of accesses
 
@@ -963,6 +1063,30 @@ FROM per_acct;
 contract-creation accounts lack a `nonce_diff`/`balance_diff` in window, and dropping
 contracts would wrongly admit those written accounts into R.
 
+### Full-history event totals (§4/§5 history subsections)
+
+Eight builders in `queries_v2.py` (`slot_write_event_totals`, `slot_read_event_totals`,
+`account_{balance,nonce}_{write,read}_totals`, `account_contract_create_totals`,
+`account_appearance_read_totals`), each a plain `countIf` aggregate over an inclusive
+block range — no per-key GROUP BY, no JOIN. Counts are additive, so
+`collect_v2_history.py` tiles `[0, 24,870,000]` into 1M-block chunks split at the merge
+block (15,537,394), runs read kinds on ethpandaops below it and on the local node above
+(write tables are full-history local), and persists per-chunk counts to
+`history_event_totals.parquet` (resumable per `(kind, chunk)`; a failed chunk is split in
+half and retried — counts lose nothing). Every builder also returns `n_total` so the
+metric partition can be verified against the row count.
+
+```sql
+-- representative shape (slot writes; the others differ only in table and predicates)
+SELECT
+    countIf(from_value =  '0x000…0' AND to_value != '0x000…0') AS n_create,
+    countIf(from_value != '0x000…0' AND to_value != '0x000…0') AS n_update,
+    countIf(from_value != '0x000…0' AND to_value =  '0x000…0') AS n_delete,
+    count() AS n_total
+FROM canonical_execution_storage_diffs
+WHERE meta_network_name = 'mainnet' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+```
+
 ## Appendix B — outputs
 
 ```
@@ -986,12 +1110,16 @@ state_access/data/v2/
   account_first_op.png                               # §8 account first-op stacked bar
   account_r_empty_split.png                          # §8 R-only empty vs non-empty
   q3_concentration_{top1,top10}_{slot,account}.png
+  history_event_totals.parquet                       # full-history per-chunk event counts
+  history_event_totals_summary.parquet               # per-(kind, metric) totals + era split
+  history_event_totals_{writes,reads}.png            # full-history event-mix stacked bars
 ```
 
-Reproduce: `uv run python -m state_access.collect_v2 && uv run python -m state_access.analysis_v2`.
-`collect_v2` is resumable per `(T, object_type)` cell; delete a histogram parquet to force a
-re-pull. Verification checks (additivity `|R∪W|=|W|+|R|`, partition sum, monotonicity) live
-in `analysis_v2.run_one`.
+Reproduce: `uv run python -m state_access.collect_v2 && uv run python -m state_access.collect_v2_history
+&& uv run python -m state_access.analysis_v2`.
+`collect_v2` is resumable per `(T, object_type)` cell; `collect_v2_history` per
+`(kind, chunk)`; delete a parquet to force a re-pull. Verification checks (additivity
+`|R∪W|=|W|+|R|`, partition sum, monotonicity, chunk tiling) live in `analysis_v2`.
 
 ## Verification Summary
 
