@@ -21,7 +21,7 @@ import time
 from collections.abc import Mapping
 
 import pandas as pd
-from clickhouse_connect.driver.exceptions import OperationalError
+from clickhouse_connect.driver.exceptions import DatabaseError
 
 from lib.clickhouse import run_query
 from state_access import queries_v2 as q
@@ -36,6 +36,11 @@ HEAVY = {
     "max_bytes_before_external_group_by": 20_000_000_000,
     "max_bytes_before_external_sort": 20_000_000_000,
 }
+
+
+def _q(sql: str) -> pd.DataFrame:
+    """Heavy analysis query: 2h budget on both the query and the socket."""
+    return run_query(sql, settings=HEAVY, send_receive_timeout=7200)
 
 
 def parquet_for(window_days: int):
@@ -88,21 +93,21 @@ def _denominators(anchor: int) -> dict:
 
 
 def _fetch_anchor(anchor: int, window_days: int) -> dict:
-    slot = run_query(q.slot_sweep_summary(anchor, window_days), settings=HEAVY).iloc[0]
-    acct = run_query(q.account_sweep_summary(anchor, window_days), settings=HEAVY).iloc[0]
+    slot = _q(q.slot_sweep_summary(anchor, window_days)).iloc[0]
+    acct = _q(q.account_sweep_summary(anchor, window_days)).iloc[0]
 
     conc: dict = {}
-    slot_hist = run_query(q.slot_histogram(anchor, window_days), settings=HEAVY)
+    slot_hist = _q(q.slot_histogram(anchor, window_days))
     for k, v in concentration_shares(slot_hist).items():
         conc[f"slot_{k}"] = v
-    acct_hist = run_query(q.account_histogram(anchor, window_days), settings=HEAVY)
+    acct_hist = _q(q.account_histogram(anchor, window_days))
     for k, v in concentration_shares(acct_hist).items():
         conc[f"acct_{k}"] = v
 
-    upd = run_query(q.slot_update_coverage(anchor, window_days), settings=HEAVY).iloc[0]
-    sfo = run_query(q.slot_first_op(anchor, window_days), settings=HEAVY).iloc[0]
-    afo = run_query(q.account_first_op(anchor, window_days), settings=HEAVY).iloc[0]
-    res = run_query(q.account_r_empty_split(anchor, window_days), settings=HEAVY).iloc[0]
+    upd = _q(q.slot_update_coverage(anchor, window_days)).iloc[0]
+    sfo = _q(q.slot_first_op(anchor, window_days)).iloc[0]
+    afo = _q(q.account_first_op(anchor, window_days)).iloc[0]
+    res = _q(q.account_r_empty_split(anchor, window_days)).iloc[0]
 
     return build_row(anchor, window_days, slot=slot, acct=acct, conc=conc, upd=upd,
                      sfo=sfo, afo=afo, res=res, denom=_denominators(anchor))
@@ -112,7 +117,7 @@ def _fetch_with_retry(anchor: int, window_days: int) -> dict:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             return _fetch_anchor(anchor, window_days)
-        except OperationalError as exc:
+        except DatabaseError as exc:
             if attempt == MAX_ATTEMPTS:
                 raise
             delay = RETRY_BASE_DELAY * attempt
@@ -138,7 +143,9 @@ def collect(window_days: int, limit: int | None = None) -> None:
         t0 = time.time()
         row = _fetch_with_retry(anchor, window_days)
         rows.append(row)
-        pd.DataFrame(rows).sort_values("anchor_block").to_parquet(parquet, index=False)
+        tmp = parquet.with_suffix(".parquet.tmp")
+        pd.DataFrame(rows).sort_values("anchor_block").to_parquet(tmp, index=False)
+        tmp.replace(parquet)
         print(f"  [{i}/{len(todo)}] block {anchor:,} {row['date']:%Y-%m-%d} "
               f"{time.time()-t0:5.0f}s: slot R∪W={row['slot_RW_union']:,} "
               f"upd warm={row['upd_pct_warm']:.1f}%", flush=True)

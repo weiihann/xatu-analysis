@@ -74,15 +74,27 @@ def _profile_config(profile: str) -> dict[str, object]:
     return config
 
 
-def get_client(profile: str = "primary") -> Client:
-    """Open a ClickHouse client for the named profile."""
-    return clickhouse_connect.get_client(**_profile_config(profile))
+def get_client(profile: str = "primary", send_receive_timeout: int | None = None) -> Client:
+    """Open a ClickHouse client for the named profile.
+
+    Args:
+        profile: Which configured cluster to use (``primary`` or ``ethpandaops``).
+        send_receive_timeout: Optional socket timeout (seconds) overriding the
+            profile default (600s). Queries running longer than this die with a
+            socket error regardless of ``max_execution_time``, so raise it in
+            step with the query-time budget for very heavy reads.
+    """
+    config = _profile_config(profile)
+    if send_receive_timeout is not None:
+        config["send_receive_timeout"] = send_receive_timeout
+    return clickhouse_connect.get_client(**config)
 
 
 def run_query(
     sql: str,
     profile: str = "primary",
     settings: dict[str, object] | None = None,
+    send_receive_timeout: int | None = None,
 ) -> pd.DataFrame:
     """Run ``sql`` against the named profile and return a DataFrame.
 
@@ -90,9 +102,12 @@ def run_query(
         sql: The query to execute.
         profile: Which configured cluster to use (``primary`` or ``ethpandaops``).
         settings: Optional ClickHouse query settings, merged over the defaults.
+        send_receive_timeout: Optional socket timeout (seconds) overriding the
+            client default (600s); match it to ``max_execution_time`` when a
+            single query may legitimately run longer than 600s.
     """
     merged = {**_DEFAULT_SETTINGS, **(settings or {})}
-    client = get_client(profile)
+    client = get_client(profile, send_receive_timeout=send_receive_timeout)
     try:
         return client.query_df(sql, settings=merged)
     finally:
