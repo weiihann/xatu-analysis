@@ -1,5 +1,8 @@
 # Hot vs cold state, with reads — additive W / R / R∪W view
 
+> Picking this work up? Start with **`HANDOVER_v2.md`** (infra, data state, code map,
+> pending work), then this report.
+
 This analysis measures Ethereum state access over trailing time windows, separating
 **writes** from **reads**. For each window it reports two disjoint sets — **W (writes)**
 and **R (pure reads, deduped against W)** — plus their union **R∪W = W + R** (the full
