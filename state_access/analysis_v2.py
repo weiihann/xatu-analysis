@@ -338,13 +338,13 @@ def _plot_slot_typed(q1t: pd.DataFrame, kind: Literal["W", "R"], total_live: int
         title = "Slot W (writes) split by value transition"
         sub = "create-only / update-only / delete-only / mixed; stacks sum to |W|"
     else:
-        # R_mixed is always 0 — a slot with no writes in window has a stable value,
-        # so all of its reads return the same value (zero or nonzero, never both).
+        # R_mixed is ≤0.2% of |R| everywhere (net-per-tx diffs / reverted writes leak
+        # intermediate values into reads — see REPORT_v2.md §2), so it isn't stacked.
         keys = ["R_only_zero", "R_only_nonzero"]
         colors = R_TYPE_COLORS
         labels = R_TYPE_LABEL
         title = "Slot R (reads-not-written) split by returned value"
-        sub = "value=0 (empty-slot probe) vs value≠0 (populated read); stacks sum to |R|"
+        sub = "value=0 (empty-slot probe) vs value≠0 (populated read); stacks sum to |R| (to within R_mixed ≤0.2%)"
     fig = go.Figure()
     for k in keys:
         fig.add_trace(go.Scatter(

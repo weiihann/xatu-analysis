@@ -87,8 +87,9 @@ def slot_typed_histogram(bn_now: int, days: int) -> str:
     Splits writes by `(from_value, to_value)` transition and reads by their returned `value`.
 
     Write types (from `storage_diffs`):
-      - `create`: `from_value = 0`, `to_value != 0` (~20k gas, always Inactive-priced)
-      - `update`: `from_value != 0`, `to_value != 0` (~5k gas, the EIP-8188-relevant case)
+      - `create`: `from_value = 0`, `to_value != 0` (~20k gas; no prior write age, so
+        write-age tiering can't discount it)
+      - `update`: `from_value != 0`, `to_value != 0` (~5k gas, the case tiering reprices)
       - `delete`: `from_value != 0`, `to_value = 0` (refund)
 
     Read types (from `storage_reads`):
