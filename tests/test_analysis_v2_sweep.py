@@ -64,3 +64,38 @@ def test_verify_against_snapshot_catches_mismatch(tmp_path, monkeypatch):
     row = _ok_row()  # slot_W=10 != ref W=11
     with pytest.raises(AssertionError, match="snapshot mismatch"):
         mod.verify_against_snapshot(pd.DataFrame([row]))
+
+
+def test_verify_against_snapshot_tolerates_small_upd_drift(tmp_path, monkeypatch):
+    import state_access.analysis_v2_sweep as mod
+    ref_typed = pd.DataFrame([{"window_days": 30, "W": 10, "R": 4}])
+    ref_acct = pd.DataFrame([{"window_days": 30, "W": 3}])
+    ref_upd = pd.DataFrame([{"window_days": 30, "total_updates": 9_000_000, "warm_updates": 8}])
+    ref_typed.to_parquet(tmp_path / "q1_warmth_slot_typed.parquet", index=False)
+    ref_acct.to_parquet(tmp_path / "q1_warmth_account.parquet", index=False)
+    ref_upd.to_parquet(tmp_path / "slot_update_coverage.parquet", index=False)
+    monkeypatch.setattr(mod, "DATA_DIR_V2", tmp_path)
+    row = _ok_row()
+    row["slot_W"] = 10
+    row["slot_R"] = 4
+    row["acct_W"] = 3
+    row["upd_total_updates"] = 9_005_000  # +0.055% drift, within 1%
+    mod.verify_against_snapshot(pd.DataFrame([row]))  # must NOT raise
+
+
+def test_verify_against_snapshot_rejects_large_upd_drift(tmp_path, monkeypatch):
+    import state_access.analysis_v2_sweep as mod
+    ref_typed = pd.DataFrame([{"window_days": 30, "W": 10, "R": 4}])
+    ref_acct = pd.DataFrame([{"window_days": 30, "W": 3}])
+    ref_upd = pd.DataFrame([{"window_days": 30, "total_updates": 9_000_000, "warm_updates": 8}])
+    ref_typed.to_parquet(tmp_path / "q1_warmth_slot_typed.parquet", index=False)
+    ref_acct.to_parquet(tmp_path / "q1_warmth_account.parquet", index=False)
+    ref_upd.to_parquet(tmp_path / "slot_update_coverage.parquet", index=False)
+    monkeypatch.setattr(mod, "DATA_DIR_V2", tmp_path)
+    row = _ok_row()
+    row["slot_W"] = 10
+    row["slot_R"] = 4
+    row["acct_W"] = 3
+    row["upd_total_updates"] = 9_500_000  # +5.6% drift, exceeds 1%
+    with pytest.raises(AssertionError, match="snapshot mismatch"):
+        mod.verify_against_snapshot(pd.DataFrame([row]))
