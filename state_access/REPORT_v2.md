@@ -760,25 +760,27 @@ At every window, the warm set falls as a share of live state across the timeline
 
 | T (days) | earliest anchor | latest anchor (= snapshot) |
 |---:|---:|---:|
-| 30  |  7.6% (2022) | 4.3% |
+| 30  |  6.8% (2022) | 4.3% |
 | 90  | 17.6% (2022) | 11.5% |
 | 180 | 29.1% (2023) | 21.4% |
 | 365 | 45.2% (2023) | 35.2% |
 
-The numerator (objects touched in a fixed-length window) is roughly stationary in absolute
+(The T=30 series peaks slightly higher, ~7.6%, in early 2023 before the decline.) The
+numerator (objects touched in a fixed-length window) is roughly stationary in absolute
 terms while the denominator (total live state) grows steadily, so the **active fraction of
-state declines monotonically**. This is the longitudinal case for tiering stated directly:
-the longer the chain runs, the larger the share of state that sits cold under any fixed
+state trends down** across the timeline — not strictly monotone week to week, but clearly
+declining at every window. This is the longitudinal case for tiering stated directly: the
+longer the chain runs, the larger the share of state that sits cold under any fixed
 activeness window. A scheme that prices or stores by write-age captures a *growing* fraction
 of state as Inactive over time.
 
 ## 11. Reads grow relative to writes
 
 The slot R/W ratio rises over the timeline at every window — from ~0.30 near the Merge to
-~0.42–0.43 at the snapshot for T=30 and T=365 (peaking near 0.65 at T=30 during the
-2024 activity surge). The pure-read slice the `_diffs` tables can't see is not a fixed
-tax on top of writes; it is a **growing** one. Whatever fraction of warm-set mass reads
-contribute today, the trend says it was smaller in the past and is still rising.
+~0.42–0.43 at the snapshot for T=30 and T=365 (with a T=30 peak near 0.65 in mid-2025).
+The pure-read slice the `_diffs` tables can't see is not a fixed tax on top of writes; it
+is a **growing** one. Whatever fraction of warm-set mass reads contribute today, the trend
+says it was smaller in the past and is still rising.
 
 ## 12. Write structure — create-dominance is activity-dependent but mean-reverting
 
@@ -786,8 +788,9 @@ contribute today, the trend says it was smaller in the past and is still rising.
 ![W_mixed composition over time (T=365)](data/v2/sweep_mixed_decomp.png)
 
 Create-only's share of |W| is the noisiest series in the sweep. At T=30 it sits near 62%
-for most of the timeline but **dips to ~42% across late 2023 and 2024** before recovering
-to ~60% by 2025. That trough is the high-throughput period (heavy update activity from the
+for most of the timeline but **softens from late 2023 and bottoms near 38% in late 2024**
+(the sub-42% stretch runs roughly March 2024 to January 2025) before recovering toward
+~60% in 2025. That trough is the high-throughput period (heavy update activity from the
 era's dominant contracts); when activity normalizes, create-dominance reverts. The wider
 windows (T=180, T=365) smooth the dip to a shallow ~47% floor — averaging over a year
 washes out the burst. The headline from §4 — write traffic is mostly state *creation*, not
@@ -798,19 +801,21 @@ never inverting.
 
 ![Slot read structure over time](data/v2/sweep_read_structure.png)
 
-The zero-probe (`SLOAD → 0`) share of |R| trends **upward** at every window: T=30 from 79%
-(2022) to 83% (2026), T=365 from 91% to 93%. As the chain matures, an ever-larger share of
-read pressure is existence checks against unset slots rather than inspection of populated
-state. The §5 finding — slot R is dominated by empty-slot probes — was if anything
-*understated* by the single recent anchor; the probe share was lower earlier and is still
-climbing.
+The zero-probe (`SLOAD → 0`) share of |R| **trends upward at the shorter windows** — T=30
+from 79% (2022) to 83% (2026), T=90 from 86% to 89% — while the long windows stay high and
+roughly flat (T=180 ~91% throughout; T=365 hovers 91–94%, ending at 93%). At the windows
+that respond, an ever-larger share of read pressure is existence checks against unset slots
+rather than inspection of populated state. The §5 finding — slot R is dominated by
+empty-slot probes — holds across the whole timeline and, at short windows, was if anything
+*understated* by the single recent anchor.
 
 ## 14. Concentration — the account-read spike is recent
 
 ![Concentration over time — top-1% share](data/v2/sweep_concentration.png)
 
-This is the sweep's sharpest result. The top-1% of R-only **accounts** captured ~83–87% of
-read accesses in 2022–2023 and climbed to **96–98% by 2025–2026** — at every window. The
+This is the sweep's sharpest result. The top-1% of R-only **accounts** captured mid-80s
+shares (~83–87%, ~85% typical) of read accesses in 2022–2023 and climbed to **96–98% by
+2025–2026** — at every window. The
 extreme account-read concentration noted in §6 is **not a structural constant of Ethereum;
 it emerged over the last two years**, as read traffic consolidated onto a shrinking set of
 heavily-called contracts (routers, multicall, popular implementations behind proxies). Slot
@@ -831,13 +836,13 @@ The policy counterfactuals are the most stable series in the sweep:
   94% of update SSTOREs stay Active at T=30d — is representative of the whole post-Merge
   era, not a lucky anchor. EIP-8188-style write-age tiering would have covered update gas
   this well at any point since the Merge.
-- **First-op = nonzero read (§8 policy-bad set) stays low throughout** — T=30 around 5–6%,
-  falling to ~2% at T=365 — with a mild bulge during the 2024 activity surge. The hypothetical
-  read-side period-bump's bad-UX set has always been a small minority of warm objects.
-- **R-only accounts grew *more* non-empty over time** — the non-empty share rose from
-  ~75% (2023) to ~93–96% (2026). The "empty accounts are free" escape hatch was always
-  small and has shrunk further: almost every R-only account now carries real balance or
-  nonce.
+- **First-op = nonzero read (§8 policy-bad set) stays low throughout** — T=30 mostly ~5–6%
+  (spiking to ~7.5% in 2024–2025), falling to ~2% at T=365. The hypothetical read-side
+  period-bump's bad-UX set has always been a small minority of warm objects.
+- **R-only accounts grew *more* non-empty over time** — the non-empty share rose from the
+  mid-70s in 2023 to ~93–96% in 2026 (~93% at T=365). The "empty accounts are free" escape
+  hatch was always small and has shrunk further: almost every R-only account now carries
+  real balance or nonce.
 
 The descriptive structure (Parts I) drifts slowly with chain age; the policy conclusions
 (Part II) are effectively time-invariant. A tiering scheme tuned on today's anchor would
