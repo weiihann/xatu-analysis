@@ -28,13 +28,13 @@ WINDOW_COLORS = {30: "#90CAF9", 90: "#42A5F5", 180: "#1976D2", 365: "#0D47A1"}
 # order runs born → grown → modified in place → ephemeral/died, with one fixed colour each.
 # Each entry: (label, colour, columns-to-sum). Numerator = sum(columns); denominator slot_W.
 WRITE_CLASSES = [
-    ("create-only", "#1976D2", ["slot_W_only_create"]),
+    ("C", "#1976D2", ["slot_W_only_create"]),
     ("C+U", "#4FC3F7", ["slot_mixed_cu"]),
-    ("update-only", "#FBC02D", ["slot_W_only_update"]),
+    ("U", "#FBC02D", ["slot_W_only_update"]),
     ("C+U+D", "#388E3C", ["slot_mixed_cud1", "slot_mixed_cudm"]),
     ("C+D", "#FB8C00", ["slot_mixed_cd1", "slot_mixed_cdm"]),
     ("U+D", "#7B1FA2", ["slot_mixed_ud"]),
-    ("delete-only", "#D32F2F", ["slot_W_only_delete"]),
+    ("D", "#D32F2F", ["slot_W_only_delete"]),
 ]
 # Read composition: zero-only vs nonzero-only as a share of |R| (R_mixed ≈ 0, not stacked).
 READ_CLASSES = [
