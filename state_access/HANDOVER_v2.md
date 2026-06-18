@@ -202,19 +202,23 @@ to delete.
 ## 6. Report structure (`REPORT_v2.md`)
 
 ```
-1 Summary · 2 Data and method
-Part I  — Descriptive:  3 Warmth · 4 Write structure · 5 Read structure · 6 Concentration
-Part II — Policy:       7 Warm-update coverage (EIP-8188) · 8 Read-side period-bump first-op
-9 What this opens up
-Part III — Historical sweep: 10 Warmth · 11 R/W · 12 Write structure · 13 Read structure ·
-           14 Concentration · 15 Policy stability — all over post-Merge time
-Appendix A (ALL SQL) · Appendix B (outputs)
+1 Introduction · 2 Summary · 3 Data and method
+4 What state access and creation looks like:  4.1 Write structure · 4.2 Read structure
+5 Warmth and concentration:                   5.1 Warmth · 5.2 Concentration
+6 EIP-8188 counterfactual:                     6.1 Warm-update coverage · 6.2 Read-side period bump
+7 What this opens up · Appendix A (ALL SQL) · Appendix B (outputs) · Verification Summary
 ```
 
-Recently reorganized (commit `1d6d114`): dropped vestigial Q1/Q3 labels and the 4b/4c/4d
-suffixes; split descriptive vs policy; **removed the "vs the original analysis" framing**
-entirely (the user does not want comparisons to the first write-only analysis). If you add
-sections, keep that — describe v2 on its own terms.
+**Topic-organized (public-facing).** Each topic merges its three lenses — snapshot,
+full-history event totals, and post-Merge over-time sweep — in one place, under `####`
+sub-headers ("… over the entire chain history", "… over time"). The former three-pass
+structure (Part I snapshot / Part II policy / Part III sweep) was collapsed: e.g. write
+structure used to live in §4 and §12, now both are in §4.1.
+
+Discipline to preserve if you edit: **removed the "vs the original analysis" framing**
+entirely (no comparisons to the first write-only analysis); keep the **T (window) vs W
+(writes)** notation; describe v2 on its own terms. The reorg was a pure restructure — no
+numbers changed (verified: identical table-row multiset, all 25 charts retained).
 
 ---
 
