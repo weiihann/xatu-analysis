@@ -88,53 +88,26 @@ Object types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
 | reads (accounts, direct) | `canonical_execution_balance_reads`, `canonical_execution_nonce_reads` |
 | reads (accounts, derived) | `canonical_execution_address_appearances`, filtered to relationships `{call_from, call_to, tx_from, tx_to, miner_fee, factory, create, suicide_refund, suicide}` |
 
-All source tables are the `canonical_execution_*` tables from
-[Xatu](https://github.com/ethpandaops/xatu), ethPandaOps' Ethereum data pipeline.
-`address_appearances` relationships `erc20_*` and `erc721_*` are excluded — they're token
-log-emission artifacts, not state-access events.
+All source tables are from
+[Xatu](https://github.com/ethpandaops/xatu).
 
 ### Set definitions
 
 For each `(T, object_type)`:
 
-- **W** — objects that appear in the writes-source tables in window (raw, no dedup).
-- **R** — objects that appear in the reads-source tables AND not in the writes sources
-  in the same window. Deduped against W by construction, so R ∩ W = ∅.
-- **R∪W = W + R** — their union, the full warm (active) set.
+- **W** — objects that are created, modified or deleted in the same window.
+- **R** — objects that are only read and not written in the same window.
+- **R∪W = W + R** — objects that are both read and written in the same window.
 
-In practice almost every written object is also read in the same window — a slot's
-`SSTORE` is preceded by an `SLOAD` (`x = f(x)` codegen), and a sender's nonce is read to
-validate the transaction that writes it — so R is reported as the reads that add something
-*beyond* W, and R∪W is just the two added together.
+In practice every written object is also read in the same window. A slot's
+`SSTORE` has to be first read, and a sender's nonce is read to
+validate the transaction that writes it. Hence, R only reports explicit reads (e.g. SLOAD) to give further insights on the state access patterns.
 
 ### Granularity and known gaps
 
-Verified empirically against the source tables (2026-06-12):
-
-- **One row per (transaction, object).** Both `_diffs` and `_reads` are deduplicated per
-  transaction: a `_diffs` row is the **net per-tx transition** of a slot (`from_value` →
-  `to_value` across the whole tx — intra-tx rewrites collapse, and an exact
-  write-then-restore cycle emits no row), and a `_reads` row records one observed value
-  per (tx, slot). "Events" in this report are therefore per-(tx, object) units, not raw
-  opcode executions. For tier-pricing questions this is the natural unit anyway: under
-  EIP-2929, repeat touches within a tx are warm regardless of tier.
-- **Reverted writes are excluded; reverted reads are included.** Failed transactions emit
-  no `_diffs` rows but their `SLOAD`s are recorded in `_reads` (verified on failed txs
-  near the anchor). R counts reads from reverted executions; W reflects only state
-  changes that stuck. This asymmetry (plus net-per-tx diffs) is what makes `R_mixed` (§4.2)
-  slightly nonzero.
-- **System-call writes are invisible to `_diffs`.** The per-block protocol writes to the
-  EIP-4788 beacon-roots, EIP-2935 history, and EIP-7002/7251 request-queue contracts do
-  not appear in `storage_diffs` (verified: 0 diff rows for the 4788/2935 contracts over
-  101 blocks, while reads of those slots do appear). W misses these slots — tens of
-  thousands, <0.01% of live state; reads of them surface in R (the single R_mixed slot at
-  T=1d is the EIP-7251 contract's slot 0).
-- **Consensus-layer withdrawals are not in `balance_diffs`.** A withdrawal recipient
-  credited at the anchor block has no `balance_diffs` row there (verified). Unique
-  withdrawal addresses are ~8.5k / 33k / 69k at T=1/30/365d — at most ~1.2% / 0.2% /
-  0.07% of |W| accounts — so withdrawal-only accounts are missing from W, with negligible
-  effect on the account-level results. Fee-recipient credits **are** captured (per-tx
-  rows verified at the anchor block).
+- **System call writes and reads are not recorded**. The per-block protocol writes to the
+  EIP-4788 beacon-roots, EIP-2935 history, and EIP-7002/7251 request-queue contracts are not captured.
+- **Consensus-layer withdrawals are not recorded**. xxx TODO
 
 ### Denominators
 
@@ -143,47 +116,22 @@ Set sizes are reported as a share of live state. Live-state denominators come fr
 **1,932,237,360 combined**. All SQL is in Appendix A. Code:
 `state_access/queries_v2.py`, `collect_v2.py`, `analysis_v2.py`.
 
-### Looking across time
-
-Most topics below are examined three ways, presented together in one place:
-
-1. **Windowed** — the breakdown across the eight trailing windows `T`, measured at block
-   24,870,000.
-2. **Full history** — event totals over the entire chain (genesis → block 24,870,000),
-   summed in 1M-block chunks.
-3. **Over time** — the windowed measurement **replayed at weekly anchors** from the Merge
-   onward, at `T ∈ {30, 90, 180, 365}` days (648 anchor-window cells), with per-anchor
-   live-state denominators. The over-time charts annotate the Shanghai, Dencun, Pectra,
-   and Fusaka forks.
-
 ## 4. What state access and creation looks like
 
-Every transaction reads and writes pieces of state. This section asks what those reads
-and writes actually *are* — whether writes mostly create new state or modify existing
-state, and whether reads fetch real data or just check whether something exists.
-(`SSTORE` and `SLOAD` are the storage write and read opcodes; a *slot* is one storage
-cell inside a contract, an *account* is one address.)
+xxx TODO need a better description
 
 ### 4.1 Write structure
 
-For storage slots, each write carries a value transition that's tiering-relevant: a
-create (`0→nonzero`, ~20k gas — a brand-new slot has no prior write age, so tiering can't
-discount it), an update (`nonzero→nonzero`, ~5k gas, what write-age tiering actually
-reprices), or a delete (`nonzero→0`, refund). This section counts those write events over
-all of history, then classifies the slots written in a window by the lifecycle they went
-through. (Transition types and lifecycle classes are defined precisely below.)
+xxx TODO need a better description
 
 #### Write events over the entire chain history
 
-This section counts *events* over the whole chain — every write event from the first
-state activity (block ~46k, July 2015) to the anchor; the windowed breakdowns that
-follow instead classify *objects*. Event counts are additive, so the sweep runs in 1M-block chunks (writes entirely
-on the local node — the `_diffs` tables are full-history there) and sums. Events are net
-per-(tx, object) units (§3).
+This section counts *write events* over the whole chain history — every write event from the first
+state activity (block ~46k, July 2015) to the anchor.
 
 **Slot write events** (9.20B total):
 
-| transition | events | share | pre-merge share | post-merge share |
+| transition | events | total share | pre-merge share | post-merge share |
 |---|---:|---:|---:|---:|
 | update (x→y) | 6,109,404,842 | **66.4%** | 62.4% | 69.4% |
 | create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
