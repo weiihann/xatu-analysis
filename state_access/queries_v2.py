@@ -452,6 +452,81 @@ FROM per_slot
 """
 
 
+def slot_creation_reads(bn_now: int, days: int) -> str:
+    """Created slots split by whether their value is read back in a *different* transaction.
+
+    Motivation: "created once, then read elsewhere." Every write emits a coupled read on the
+    same `(tx, slot)` (the SSTORE's own SLOAD), which must not count — so a **genuine read**
+    is a populated (`value != 0`) read in a transaction that did **not** write the slot. The
+    per-key histograms can't make this split (they sum reads per slot), so this works at
+    `(tx, slot)` grain.
+
+    Two-level, join-free aggregation:
+      - per `(slot, tx)`: did this tx write the slot (`is_w`), with which transition flags
+        (`create`/`update`/`delete`), and did a read in it return nonzero (`r_nonzero`)?
+      - per slot: which transition types it ever saw, and `genuine_nz` = was there a nonzero
+        read in any non-write tx (`maxIf(r_nonzero, is_w = 0)`).
+
+    Restricted to the two creation classes the analysis is about:
+      - **C** (create-only): create present, no update, no delete.
+      - **C+D** (created + deleted, ephemeral): create and delete present, no update.
+
+    Returns one row `(c_only, c_only_read, cd, cd_read)` — totals and the genuine-read-back
+    subset of each. `c_only` equals `slot_W_only_create` and `cd` equals the C+D combo from
+    `slot_sweep_summary` (a cross-check at the anchor).
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH per_slot_tx AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        cityHash64(tx) AS txh,
+        max(is_w)      AS w,
+        max(is_create) AS c,
+        max(is_update) AS u,
+        max(is_delete) AS d,
+        max(r_nonzero) AS rnz
+    FROM (
+        SELECT
+            address, slot, transaction_hash AS tx,
+            toUInt8(1) AS is_w,
+            toUInt8(from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS is_create,
+            toUInt8(from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS is_update,
+            toUInt8(from_value != '{_ZERO}' AND to_value =  '{_ZERO}') AS is_delete,
+            toUInt8(0) AS r_nonzero
+        FROM canonical_execution_storage_diffs
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+        UNION ALL
+        SELECT
+            contract_address, slot, transaction_hash AS tx,
+            toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0),
+            toUInt8(value != '{_ZERO}') AS r_nonzero
+        FROM canonical_execution_storage_reads
+        WHERE meta_network_name = '{NETWORK}'
+          AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    )
+    GROUP BY h, txh
+),
+per_slot AS (
+    SELECT
+        h,
+        max(c) AS hc,
+        max(u) AS hu,
+        max(d) AS hd,
+        maxIf(rnz, w = 0) AS genuine_nz
+    FROM per_slot_tx
+    GROUP BY h
+)
+SELECT
+    countIf(hc = 1 AND hu = 0 AND hd = 0)                      AS c_only,
+    countIf(hc = 1 AND hu = 0 AND hd = 0 AND genuine_nz = 1)   AS c_only_read,
+    countIf(hc = 1 AND hd = 1 AND hu = 0)                      AS cd,
+    countIf(hc = 1 AND hd = 1 AND hu = 0 AND genuine_nz = 1)   AS cd_read
+FROM per_slot
+"""
+
+
 # ---------------------------------------------------------------------------
 # Full-history event totals (additive countIf aggregates — no per-key GROUP BY).
 #
