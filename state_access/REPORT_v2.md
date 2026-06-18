@@ -166,13 +166,12 @@ cell inside a contract, an *account* is one address.)
 
 ### 4.1 Write structure
 
-For storage slots, the writes carry a value transition that's tiering-relevant:
-`create` (0→nonzero, ~20k gas — a brand-new slot has no prior write age, so tiering
-can't discount it), `update` (X→Y nonzero→nonzero, ~5k gas, what write-age tiering
-actually reprices), `delete` (nonzero→0, refund). Write types are net per-tx transitions
-(§3). A single slot can have multiple write types in window (created early, updated
-later); the disjoint partition below picks slots whose writes are ALL of one type
-("create-only" etc.) and lumps the rest into "mixed".
+For storage slots, each write carries a value transition that's tiering-relevant: a
+create (`0→nonzero`, ~20k gas — a brand-new slot has no prior write age, so tiering can't
+discount it), an update (`nonzero→nonzero`, ~5k gas, what write-age tiering actually
+reprices), or a delete (`nonzero→0`, refund). This section counts those write events over
+all of history, then classifies the slots written in a window by the lifecycle they went
+through. (Transition types and lifecycle classes are defined precisely below.)
 
 #### Write events over the entire chain history
 
@@ -210,7 +209,7 @@ Three things stand out:
 
 1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
    slot write events ever are updates, yet 62% of slots written in a 365d window are
-   create-only (the windowed partition below). Both are true at once: updates concentrate on a small hot set
+   class C — created and never touched again (the composition below). Both are true at once: updates concentrate on a small hot set
    of slots hit over and over, while creations contribute exactly one event each across an
    enormous population. Which framing matters depends on the question — gas spent in
    blocks tracks the event mix; state growth and tier-population tracks the object mix.
@@ -226,17 +225,36 @@ Three things stand out:
 
 #### Write structure — the lifecycle of a written slot
 
-Every slot in the write set falls into exactly one **lifecycle class**, named by which
-transition types it saw in the window: `create-only` (born, untouched after), `C+U` (born
-then modified), `update-only` (pre-existing, modified in place), `C+U+D` (born, modified,
-died), `C+D` (born and died — ephemeral), `U+D` (modified then died), `delete-only` (died).
-The seven classes partition |W| and sum to 100% of it. (`C+D` and `C+U+D` fold together
-their single- and multi-cycle variants; slots that churn through repeated birth/death
-within one window are a stable ~2–3% minority.)
+Each write event on a slot is one of three **transition types** (values are net per
+transaction — §3):
+
+- **C** (create): `0 → nonzero` — an empty slot becomes set.
+- **U** (update): `nonzero → nonzero` — a set slot's value changes.
+- **D** (delete): `nonzero → 0` — a set slot is cleared.
+
+Every slot in the write set is then classified by *which* transition types it saw in the
+window — a slot can see a type more than once. The seven classes partition |W| and sum to
+100% of it:
+
+- **C** — created once, then untouched (no update or delete in window). A second create
+  needs a delete first, so a C slot has exactly one create.
+- **U** — updated one or more times; never created or deleted in window — a slot that
+  existed before the window, modified in place.
+- **D** — deleted once; never created or updated in window — a pre-existing slot cleared.
+- **C+U** — created once, then updated **one or more times**, not deleted (no delete ⇒
+  exactly one create; the `+U` is one update or many).
+- **C+D** — created and deleted but never updated; one or more birth→death cycles.
+- **U+D** — updated one or more times, then deleted; existed before the window (not created
+  in it).
+- **C+U+D** — created, updated one or more times, and deleted — a full lifecycle, possibly
+  repeated.
+
+(`C+D` and `C+U+D` fold their single- and multi-cycle variants together; slots that churn
+through repeated birth/death within one window are a stable ~2–3% minority.)
 
 At the latest anchor, as a share of |W|:
 
-| T (days) | create-only | C+U | update-only | C+U+D | C+D | U+D | delete-only |
+| T (days) | C | C+U | U | C+U+D | C+D | U+D | D |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 30  | 59.6% | 4.6% | 16.1% | 2.4% | 11.4% | 0.4% | 5.5% |
 | 90  | 61.1% | 7.6% | 10.8% | 2.9% | 12.9% | 0.3% | 4.3% |
@@ -247,20 +265,19 @@ At the latest anchor, as a share of |W|:
 
 Reading the composition and how it moves across the post-Merge timeline:
 
-1. **Create-only is the floor — ~60% of |W| at every window, and steady over time.** Most
-   slots are in the write set because they were *initialized* in window and never touched
-   again. State growth, not churn.
+1. **C is the floor — ~60% of |W| at every window, and steady over time.** Most slots are
+   in the write set because they were *initialized* in window and never touched again.
+   State growth, not churn.
 2. **`C+D` ephemeral state is the largest mixed class** — 11–13% of |W| — slots born and
    died inside the window (temporary mappings, intermediate compute, "pending" markers
    cleaned up after use). Steady at every window across the timeline.
-3. **The in-place-modify share tracks activity.** At T=30, `update-only` climbed from 8%
-   (2022) to 16% (2026) while `C+U` fell from 9% to 5%; through the high-throughput 2024
-   surge the update-bearing classes swell and create-only dips (to ~38% at T=30 in late
-   2024) before reverting. The wider windows smooth the excursion — create-dominance never
-   inverts.
+3. **The in-place-modify share tracks activity.** At T=30, `U` climbed from 8% (2022) to
+   16% (2026) while `C+U` fell from 9% to 5%; through the high-throughput 2024 surge the
+   update-bearing classes swell and `C` dips (to ~38% at T=30 in late 2024) before
+   reverting. The wider windows smooth the excursion — create-dominance never inverts.
 
 The slots a write-age tiering scheme actually reprices are those carrying an **update** —
-`update-only ∪ C+U ∪ U+D ∪ C+U+D`, about **21% of |W|** at every window from 14d up, flat
+`U ∪ C+U ∪ U+D ∪ C+U+D`, about **21% of |W|** at every window from 14d up, flat
 across the whole timeline. At T=365d that is 21% × 25.4% = **~5.4% of live state**; at
 T=30d, ~0.7%. The other ~80% of |W| is pure creation or deletion, which write-age tiering
 cannot discount — a brand-new slot has no prior write age.
