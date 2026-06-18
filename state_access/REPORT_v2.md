@@ -222,127 +222,48 @@ Three things stand out:
    creates — and the accounting closes: creates − deletes = 1.558B vs 1.553B live slots at
    the anchor (**100.4%**, the 0.4% residual being net-per-tx granularity and the missing
    system-call writes of §3). State that "dies" is a large recurring flow, consistent with
-   the C+D ephemeral-lifecycle pattern in the W_mixed decomposition.
+   the `C+D` ephemeral class in the lifecycle composition below.
 
-#### Slot W partitioned by transition type (% of live state)
+#### Write structure — the lifecycle of a written slot
 
-Stacked total = W. Verification: the four columns sum exactly to W from §5.1.
+Every slot in the write set falls into exactly one **lifecycle class**, named by which
+transition types it saw in the window: `create-only` (born, untouched after), `C+U` (born
+then modified), `update-only` (pre-existing, modified in place), `C+U+D` (born, modified,
+died), `C+D` (born and died — ephemeral), `U+D` (modified then died), `delete-only` (died).
+The seven classes partition |W| and sum to 100% of it. (`C+D` and `C+U+D` fold together
+their single- and multi-cycle variants; slots that churn through repeated birth/death
+within one window are a stable ~2–3% minority.)
 
-| T (days) | create-only | update-only | delete-only | mixed (≥2 types) | W |
-|---:|---:|---:|---:|---:|---:|
-| 1   |  0.045% | 0.034% | 0.005% | 0.016% |  0.10% |
-| 7   |  0.327% | 0.135% | 0.043% | 0.133% |  0.64% |
-| 14  |  0.827% | 0.248% | 0.091% | 0.257% |  1.42% |
-| 30  |  1.748% | 0.472% | 0.162% | 0.552% |  2.93% |
-| 60  |  3.635% | 0.672% | 0.258% | 1.206% |  5.77% |
-| 90  |  4.876% | 0.862% | 0.344% | 1.893% |  7.98% |
-| 180 |  9.874% | 1.407% | 0.650% | 3.559% | 15.49% |
-| 365 | 15.675% | 2.078% | 0.939% | 6.743% | 25.43% |
+At the latest anchor, as a share of |W|:
 
-#### Slot W subtype touch rates (overlap allowed, % of |W|)
+| T (days) | create-only | C+U | update-only | C+U+D | C+D | U+D | delete-only |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 30  | 59.6% | 4.6% | 16.1% | 2.4% | 11.4% | 0.4% | 5.5% |
+| 90  | 61.1% | 7.6% | 10.8% | 2.9% | 12.9% | 0.3% | 4.3% |
+| 180 | 63.7% | 7.6% |  9.1% | 2.9% | 12.2% | 0.3% | 4.2% |
+| 365 | 61.6% | 9.4% |  8.2% | 3.4% | 13.3% | 0.4% | 3.7% |
 
-A slot can have multiple write types in window. These are the share of |W| with at least
-one event of each type — the rows do not sum to 100%.
+![Slot write composition over time](data/v2/sweep_write_composition.png)
 
-| T (days) | any create | any update | any delete |
-|---:|---:|---:|---:|
-| 1   | 59.6% | 40.3% | 17.7% |
-| 7   | 71.4% | 28.7% | 23.3% |
-| 30  | 78.0% | 23.5% | 19.7% |
-| 90  | 84.6% | 21.6% | 20.4% |
-| 365 | 87.8% | 21.4% | 20.8% |
+Reading the composition and how it moves across the post-Merge timeline:
 
-**Read this carefully.** Of the 25.4% of live slots in |W| at T=365d:
-- **88% have at least one creation event** (62% are pure create-only); the slot is in W
-  primarily because it was *initialized* in window.
-- **21% have at least one update**; the EIP-8188-relevant subset of W.
-- **21% have at least one deletion**.
+1. **Create-only is the floor — ~60% of |W| at every window, and steady over time.** Most
+   slots are in the write set because they were *initialized* in window and never touched
+   again. State growth, not churn.
+2. **`C+D` ephemeral state is the largest mixed class** — 11–13% of |W| — slots born and
+   died inside the window (temporary mappings, intermediate compute, "pending" markers
+   cleaned up after use). Steady at every window across the timeline.
+3. **The in-place-modify share tracks activity.** At T=30, `update-only` climbed from 8%
+   (2022) to 16% (2026) while `C+U` fell from 9% to 5%; through the high-throughput 2024
+   surge the update-bearing classes swell and create-only dips (to ~38% at T=30 in late
+   2024) before reverting. The wider windows smooth the excursion — create-dominance never
+   inverts.
 
-The update fraction of |W| **holds steady around 20–24%** across windows from
-14d to 365d (28.7% at T=7d). So **|W ∩ updates| ≈ 21% × |W|** at every T of interest. At
-T=30d that's 23.5% × 2.93% = **0.7% of live state**; at T=365d, 21.4% × 25.43% =
-**5.4% of live state**. These are the slots write-age tiering would actually reprice.
-
-The create-only fraction *grows* with T (45% → 62% over 1d → 365d) because the longer the
-window, the more newly-created slots accumulate without subsequent activity. Slot creation
-is a one-shot event by nature.
-
-![Slot W partition](data/v2/q1_warmth_slot_W_typed.png)
-
-#### Decomposing W_mixed — what's in the "≥2 types" bucket?
-
-W_mixed at T=365d is **6.74% of state** (~27% of |W|), so it earns its own decomposition.
-Structurally, slots in W_mixed carry ≥2 of `{create, update, delete}`. Combining these
-into the 6 possible patterns, sub-binning the multi-cycle-capable ones by create-count:
-
-| combo | structural rule | count constraint |
-|---|---|---|
-| `C+U` | no delete | `n_C = 1` always (multiple creates need deletes between them) |
-| `C+D (1-cycle)` | no update; `n_C = 1` | born once, died once — single ephemeral lifecycle |
-| `C+D (multi-cycle)` | no update; `n_C ≥ 2` | repeated birth/death cycles, no modification |
-| `U+D` | no create; `n_D = 1` always | k updates then one terminal delete (existed pre-window) |
-| `C+U+D (1-cycle)` | all three; `n_C = 1` | full single lifecycle (born, modified, died) |
-| `C+U+D (multi-cycle)` | all three; `n_C ≥ 2` | full lifecycle, repeated |
-
-Composition of W_mixed at each T (% of W_mixed; rows sum to 100%):
-
-| T (days) | C+U | C+D (1-cycle) | C+D (multi) | U+D | C+U+D (1-cycle) | C+U+D (multi) |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1   | 20.45% | 52.98% | 8.04% | 5.71% | 7.18% | 5.64% |
-| 7   | 20.64% | 55.74% | 8.10% | 3.47% | 6.16% | 5.88% |
-| 14  | 21.50% | 54.85% | 8.30% | 3.13% | 6.20% | 6.03% |
-| 30  | 24.59% | 51.02% | 9.41% | 2.29% | 5.98% | 6.71% |
-| 60  | 27.26% | 49.35% | 9.86% | 1.55% | 5.72% | 6.26% |
-| 90  | 32.11% | 45.26% | 9.08% | 1.36% | 5.87% | 6.31% |
-| 180 | 33.02% | 44.37% | 8.56% | 1.49% | 5.90% | 6.66% |
-| 365 | 35.62% | 42.42% | 7.84% | 1.35% | 6.36% | 6.42% |
-
-Absolute share of live state (W_mixed sub-categories, % of state):
-
-| T (days) | C+U | C+D (1-cycle) | C+D (multi) | U+D | C+U+D (1-cycle) | C+U+D (multi) |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1   | 0.0032% | 0.0082% | 0.0013% | 0.0009% | 0.0011% | 0.0009% |
-| 30  | 0.1357% | 0.2816% | 0.0520% | 0.0126% | 0.0330% | 0.0370% |
-| 90  | 0.6078% | 0.8568% | 0.1719% | 0.0258% | 0.1112% | 0.1194% |
-| 365 | 2.4016% | 2.8603% | 0.5287% | 0.0908% | 0.4285% | 0.4326% |
-
-![W_mixed decomposition](data/v2/q1_warmth_slot_mixed_decomp.png)
-
-Three things worth reading off:
-
-1. **C+D (1-cycle) is the largest mixed category at almost every T** — 42–56%. These are
-   slots **born and died in the same window with exactly one create and one delete**.
-   Ephemeral state — probably temporary mapping entries, intermediate compute slots, or
-   "pending" markers cleaned up after consumption. At T=365d this single category accounts
-   for **2.86% of live state**, the largest piece of W_mixed.
-2. **C+U grows steadily with T** (20% at T=1d → 35.6% at T=365d). These are slots created
-   in window then modified at least once but not deleted — the "fresh hot storage"
-   pattern. Their share rises with T because they accumulate updates over time without
-   dying.
-3. **U+D shrinks as T grows** (5.7% at T=1d → 1.4% at T=365d). At small T the
-   "modified-then-died" pattern is more visible because long lifecycle histories haven't
-   completed yet; at large T most pre-existing slots that die also get recreated somewhere
-   along the way (moving them to C+U+D), and many that don't die stay in W_only_update.
-
-**Multi-cycle is a stable minority.** C+D multi-cycle and C+U+D multi-cycle each sit around
-6–10% of W_mixed at every T. Combined ~14%. So the "slot churns through multiple
-birth-death cycles in window" pattern is real but small — most mixed slots have a single
-lifecycle within window.
-
-#### Write structure over time
-
-![Slot write structure over time](data/v2/sweep_write_structure.png)
-![W_mixed composition over time (T=365)](data/v2/sweep_mixed_decomp.png)
-
-Create-only's share of |W| is the noisiest series in the sweep. At T=30 it sits near 62%
-for most of the timeline but **softens from late 2023 and bottoms near 38% in late 2024**
-(the sub-42% stretch runs roughly March 2024 to January 2025) before recovering toward
-~60% in 2025. That trough is the high-throughput period (heavy update activity from the
-era's dominant contracts); when activity normalizes, create-dominance reverts. The wider
-windows (T=180, T=365) smooth the dip to a shallow ~47% floor — averaging over a year
-washes out the burst. The headline from §4.1 — write traffic is mostly state *creation*, not
-churn — holds across the whole post-Merge range, with a single activity-driven excursion,
-never inverting.
+The slots a write-age tiering scheme actually reprices are those carrying an **update** —
+`update-only ∪ C+U ∪ U+D ∪ C+U+D`, about **21% of |W|** at every window from 14d up, flat
+across the whole timeline. At T=365d that is 21% × 25.4% = **~5.4% of live state**; at
+T=30d, ~0.7%. The other ~80% of |W| is pure creation or deletion, which write-age tiering
+cannot discount — a brand-new slot has no prior write age.
 
 ### 4.2 Read structure
 
@@ -354,48 +275,6 @@ to T=90d, then 0.02% of |R| at T=180d and 0.2% at T=365d — the leak comes from
 net-per-tx diffs and reverted writes exposing intermediate values to reads (§3); its
 T=180d head is dominated by busy token-balance slots (USDT, USDC) whose writes cancel
 within transactions.
-
-#### Slot R partitioned by returned value (% of live state)
-
-R_mixed is omitted (≤0.2% of |R| everywhere). Stacked total ≈ R, exact to within R_mixed.
-
-| T (days) | zero-only | nonzero-only | R |
-|---:|---:|---:|---:|
-| 1   |  0.045% | 0.022% |  0.07% |
-| 7   |  0.279% | 0.077% |  0.36% |
-| 14  |  0.513% | 0.131% |  0.64% |
-| 30  |  1.037% | 0.213% |  1.25% |
-| 60  |  2.046% | 0.293% |  2.34% |
-| 90  |  2.916% | 0.364% |  3.28% |
-| 180 |  5.373% | 0.535% |  5.91% |
-| 365 |  9.838% | 0.754% | 10.61% |
-
-#### Slot R — share of |R| by returned value
-
-| T (days) | zero | nonzero |
-|---:|---:|---:|
-| 1   | 67.8% | 32.2% |
-| 7   | 78.4% | 21.6% |
-| 30  | 83.0% | 17.0% |
-| 90  | 88.9% | 11.1% |
-| 365 | 92.7% |  7.1% |
-
-**The zero-share grows monotonically with T**, reaching 93% at T=365d. So:
-
-- **Most of slot R is empty-slot probes** — `SLOAD` returning 0 against slots that haven't
-  been written in (or before) the window. Typical cases: a contract checking whether a
-  mapping entry exists (`mapping[key]` returns 0 if unset), state-existence guards
-  (`if (slot == 0) revert()`), default-value reads.
-- **Only ~7% of R at T=365d is genuine populated state inspection** — `SLOAD` returning
-  meaningful data from slots that hold real state but happen not to be modified in this
-  window (oracle parameters, contract config, immutable-style storage variables filled at
-  deploy then never changed).
-- The nonzero-only share *shrinks* with T because the universe of "ever-set slots that
-  weren't touched in 365 days" grows much slower than the universe of "slots probed with
-  `SLOAD` and found empty" — empty-slot probes scale with calldata-driven access,
-  populated reads scale with the small set of legitimately read-only state.
-
-![Slot R partition](data/v2/q1_warmth_slot_R_typed.png)
 
 #### Read events over the entire chain history
 
@@ -447,17 +326,31 @@ Reading the table:
    pre-merge appearance events but 0.02% post-merge — the visible footprint of EIP-3529
    (refund removal) and EIP-6780 (same-tx-only SELFDESTRUCT).
 
-#### Read structure over time
+#### Read structure — what reads return
 
-![Slot read structure over time](data/v2/sweep_read_structure.png)
+Each slot in R returns either `zero` (an empty-slot probe — "is this slot set?") or
+`nonzero` (a populated read). The two classes partition |R| (`R_mixed ≈ 0`). At the latest
+anchor, as a share of |R|:
 
-The zero-probe (`SLOAD → 0`) share of |R| **trends upward at the shorter windows** — T=30
-from 79% (2022) to 83% (2026), T=90 from 86% to 89% — while the long windows stay high and
-roughly flat (T=180 ~91% throughout; T=365 hovers 91–94%, ending at 93%). At the windows
-that respond, an ever-larger share of read pressure is existence checks against unset slots
-rather than inspection of populated state. The §4.2 finding — slot R is dominated by
-empty-slot probes — holds across the whole timeline and, at short windows, was if anything
-*understated* by the single recent anchor.
+| T (days) | zero-only | nonzero-only |
+|---:|---:|---:|
+| 30  | 83.0% | 17.0% |
+| 90  | 88.9% | 11.1% |
+| 180 | 90.9% |  9.1% |
+| 365 | 92.7% |  7.1% |
+
+![Slot read composition over time](data/v2/sweep_read_composition.png)
+
+- **Most of R is empty-slot probes** — `SLOAD` returning 0 against slots not set in (or
+  before) the window: mapping-existence checks (`mapping[key]` is 0 if unset),
+  `if (slot == 0)` guards, default reads. Only ~7–17% of R is genuine populated state
+  inspection (oracle parameters, config, immutable-style storage), and that nonzero share
+  shrinks as the window widens — empty probes scale with calldata-driven access, populated
+  reads with the small set of legitimately read-only state.
+- **Over time the probe share drifts up at short windows** — T=30 from 79% (2022) to 83%
+  (2026), T=90 from 86% to 89% — while the long windows stay flat-to-high (T=180 ~91%
+  throughout; T=365 hovers 91–94%, ending 93%). The empty-probe dominance holds across the
+  whole post-Merge range and, at short windows, was understated by the latest anchor alone.
 
 ## 5. Warmth and concentration
 
@@ -1252,8 +1145,8 @@ state_access/data/v2/
   sweep_w{30,90,180,365}.parquet                     # Part III: one wide row per anchor
   sweep_summary.parquet                              # Part III: all windows pooled (long)
   sweep_warmth_{slot,acct,combined}.png              # §5.1 warmth over time
-  sweep_write_structure.png  sweep_mixed_decomp.png  # §4.1 write structure over time
-  sweep_read_structure.png                           # §4.2 read structure over time
+  sweep_write_composition.png                        # §4.1 write lifecycle composition over time
+  sweep_read_composition.png                         # §4.2 read composition over time
   sweep_concentration.png                            # §5.2 concentration over time
   sweep_update_coverage.png  sweep_first_op.png  sweep_empty_split.png  # §6 policy over time
 ```

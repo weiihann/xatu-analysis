@@ -16,19 +16,31 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objs as go
+from plotly.subplots import make_subplots
 
 from state_access.config_v2 import ANCHOR_BLOCK_V2, DATA_DIR_V2, SWEEP_WINDOWS
 from state_access.history_config import FORKS, block_to_date
 
 WINDOW_COLORS = {30: "#90CAF9", 90: "#42A5F5", 180: "#1976D2", 365: "#0D47A1"}
-_MIXED_COMBOS = {
-    "slot_mixed_cu": ("C+U", "#1565C0"),
-    "slot_mixed_cd1": ("C+D (1-cycle)", "#FFA000"),
-    "slot_mixed_cdm": ("C+D (multi-cycle)", "#E65100"),
-    "slot_mixed_ud": ("U+D", "#7B1FA2"),
-    "slot_mixed_cud1": ("C+U+D (1-cycle)", "#388E3C"),
-    "slot_mixed_cudm": ("C+U+D (multi-cycle)", "#1B5E20"),
-}
+
+# Write lifecycle composition: each written slot falls in exactly one class; shares sum to
+# |W|. The six W_mixed combos collapse to four families (cycle-count split dropped). Stack
+# order runs born → grown → modified in place → ephemeral/died, with one fixed colour each.
+# Each entry: (label, colour, columns-to-sum). Numerator = sum(columns); denominator slot_W.
+WRITE_CLASSES = [
+    ("create-only", "#1976D2", ["slot_W_only_create"]),
+    ("C+U", "#4FC3F7", ["slot_mixed_cu"]),
+    ("update-only", "#FBC02D", ["slot_W_only_update"]),
+    ("C+U+D", "#388E3C", ["slot_mixed_cud1", "slot_mixed_cudm"]),
+    ("C+D", "#FB8C00", ["slot_mixed_cd1", "slot_mixed_cdm"]),
+    ("U+D", "#7B1FA2", ["slot_mixed_ud"]),
+    ("delete-only", "#D32F2F", ["slot_W_only_delete"]),
+]
+# Read composition: zero-only vs nonzero-only as a share of |R| (R_mixed ≈ 0, not stacked).
+READ_CLASSES = [
+    ("zero-only", "#90CAF9", ["slot_R_only_zero"]),
+    ("nonzero-only", "#1565C0", ["slot_R_only_nonzero"]),
+]
 
 
 def _render(fig_dict: dict, path: str) -> None:
@@ -141,6 +153,43 @@ def _add_window_traces(fig: go.Figure, df: pd.DataFrame, value_fn, label: str,
         ))
 
 
+def verify_composition(df: pd.DataFrame) -> None:
+    """Each cell's class shares must partition the access set exactly."""
+    for _, r in df.iterrows():
+        where = f"anchor={int(r.anchor_block):,} T={int(r.window_days)}"
+        w_sum = sum(r[c] for _, _, cols in WRITE_CLASSES for c in cols)
+        assert w_sum == r.slot_W, f"write classes don't sum to |W| at {where}"
+        assert r.slot_R_only_zero + r.slot_R_only_nonzero + r.slot_R_mixed == r.slot_R, \
+            f"read classes don't sum to |R| at {where}"
+
+
+def _composition_fig(df: pd.DataFrame, classes: list, denom_col: str, title: str) -> go.Figure:
+    """4-panel (one per window) stacked-area composition over time, shares to 100%."""
+    windows = sorted(df["window_days"].unique())
+    fig = make_subplots(
+        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
+        shared_yaxes=True, vertical_spacing=0.11, horizontal_spacing=0.06)
+    for i, t in enumerate(windows):
+        row, col = i // 2 + 1, i % 2 + 1
+        sub = df[df.window_days == t].sort_values("date")
+        denom = sub[denom_col].where(sub[denom_col] != 0)
+        for label, color, cols in classes:
+            num = sum(sub[c] for c in cols)
+            fig.add_trace(go.Scatter(
+                x=sub["date"], y=100 * num / denom, name=label, legendgroup=label,
+                showlegend=(i == 0), mode="lines", stackgroup=f"w{t}",
+                line=dict(color=color, width=0.5), fillcolor=color), row=row, col=col)
+    when = [block_to_date(b).strftime("%Y-%m-%d") for b in FORKS.values()]
+    for x in when:
+        fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
+    fig.update_yaxes(range=[0, 100], ticksuffix="%", gridcolor="lightgray")
+    fig.update_xaxes(gridcolor="lightgray")
+    fig.update_layout(
+        title=title, template="plotly_white", width=1200, height=820,
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
+    return fig
+
+
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
@@ -159,30 +208,12 @@ def render_all(df: pd.DataFrame) -> None:
                        / (s.denom_storages + s.denom_accounts), "R∪W")
     charts.append(("sweep_warmth_combined.png", fig))
 
-    fig = _base_fig("Slot write structure over time", "% of |W|")
-    _add_window_traces(fig, df, lambda s: 100 * s.slot_W_only_create / s.slot_W,
-                       "create-only")
-    _add_window_traces(fig, df, lambda s: 100 * s.slot_W_any_update / s.slot_W,
-                       "any-update", dash="dash")
-    charts.append(("sweep_write_structure.png", fig))
-
-    d365 = df[df.window_days == 365]
-    if not d365.empty:
-        fig = _base_fig("W_mixed composition over time (T=365d)", "% of W_mixed")
-        for col, (label, color) in _MIXED_COMBOS.items():
-            fig.add_trace(go.Scatter(
-                x=d365["date"],
-                y=100 * d365[col] / d365["slot_W_mixed"].where(d365["slot_W_mixed"] != 0),
-                name=label,
-                mode="lines", stackgroup="one", line=dict(color=color, width=0.5),
-                fillcolor=color))
-        fig.update_yaxes(range=[0, 100], rangemode=None)
-        charts.append(("sweep_mixed_decomp.png", fig))
-
-    fig = _base_fig("Slot read structure over time", "% of |R|")
-    _add_window_traces(fig, df, lambda s: 100 * s.slot_R_only_zero / s.slot_R,
-                       "zero-only")
-    charts.append(("sweep_read_structure.png", fig))
+    charts.append(("sweep_write_composition.png", _composition_fig(
+        df, WRITE_CLASSES, "slot_W",
+        "Slot write lifecycle composition over time — % of |W|, by window")))
+    charts.append(("sweep_read_composition.png", _composition_fig(
+        df, READ_CLASSES, "slot_R",
+        "Slot read composition over time — % of |R|, by window")))
 
     fig = _base_fig("Concentration over time — top-1% share of accesses",
                     "share of accesses")
@@ -221,6 +252,7 @@ def main() -> None:
     print(f"{len(df)} sweep rows across windows {sorted(df.window_days.unique())}")
     verify_rows(df)
     verify_against_snapshot(df)
+    verify_composition(df)
     df.to_parquet(DATA_DIR_V2 / "sweep_summary.parquet", index=False)
     render_all(df)
     print("Done.")
