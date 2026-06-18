@@ -174,6 +174,56 @@ actually reprices), `delete` (nonzero→0, refund). Write types are net per-tx t
 later); the disjoint partition below picks slots whose writes are ALL of one type
 ("create-only" etc.) and lumps the rest into "mixed".
 
+#### Write events over the entire chain history
+
+This section counts *events* over the whole chain — every write event from the first
+state activity (block ~46k, July 2015) to the anchor; the windowed breakdowns that
+follow instead classify *objects*. Event counts are additive, so the sweep runs in 1M-block chunks (writes entirely
+on the local node — the `_diffs` tables are full-history there) and sums. Events are net
+per-(tx, object) units (§3).
+
+**Slot write events** (9.20B total):
+
+| transition | events | share | pre-merge share | post-merge share |
+|---|---:|---:|---:|---:|
+| update (x→y) | 6,109,404,842 | **66.4%** | 62.4% | 69.4% |
+| create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
+| delete (x→0) |   765,554,231 |  8.3% |  8.6% |  8.1% |
+
+**Account write events:**
+
+| source | metric | events | share | pre / post share |
+|---|---|---:|---:|---|
+| balance_diffs (8.55B) | adjust (x→y) | 7,965,568,085 | **93.1%** | 92.5% / 93.7% |
+| | fund (0→x) | 385,657,967 | 4.5% | 4.7% / 4.3% |
+| | drain (x→0) | 203,518,204 | 2.4% | 2.7% / 2.0% |
+| nonce_diffs (3.42B) | subsequent | 3,043,409,094 | **89.0%** | 89.0% / 88.9% |
+| | first use (from 0) | 376,865,812 | 11.0% | 11.0% / 11.1% |
+| contracts | creations | 100,078,703 | — | 51.3M pre / 48.8M post |
+
+(`balance_diffs` also contains 87.5M `0→0` rows — zero-value touches, 1.0% of the table —
+excluded from the shares above.)
+
+![Full-history write event mix](data/v2/history_event_totals_writes.png)
+
+Three things stand out:
+
+1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
+   slot write events ever are updates, yet 62% of slots written in a 365d window are
+   create-only (the windowed partition below). Both are true at once: updates concentrate on a small hot set
+   of slots hit over and over, while creations contribute exactly one event each across an
+   enormous population. Which framing matters depends on the question — gas spent in
+   blocks tracks the event mix; state growth and tier-population tracks the object mix.
+2. **The mix is stable across eras.** Pre-merge vs post-merge moves the update
+   share by only ~7pp (62.4% → 69.4%) over seven years of regime change; the balance and
+   nonce mixes barely move at all. The structure of write traffic is a property of how
+   contracts use storage, not of any fee regime.
+3. **A third of all slots ever created have been deleted.** 766M deletes against 2.32B
+   creates — and the accounting closes: creates − deletes = 1.558B vs 1.553B live slots at
+   the anchor (**100.4%**, the 0.4% residual being net-per-tx granularity and the missing
+   system-call writes of §3). State that "dies" is a large recurring flow, consistent with
+   the C+D ephemeral-lifecycle pattern in the W_mixed decomposition.
+
 #### Slot W partitioned by transition type (% of live state)
 
 Stacked total = W. Verification: the four columns sum exactly to W from §5.1.
@@ -278,56 +328,6 @@ Three things worth reading off:
 6–10% of W_mixed at every T. Combined ~14%. So the "slot churns through multiple
 birth-death cycles in window" pattern is real but small — most mixed slots have a single
 lifecycle within window.
-
-#### Write events over the entire chain history
-
-The windowed views above classify *objects*; this section counts *events* over the whole
-chain — every write event from the first state activity (block ~46k, July 2015) to the
-anchor. Event counts are additive, so the sweep runs in 1M-block chunks (writes entirely
-on the local node — the `_diffs` tables are full-history there) and sums. Events are net
-per-(tx, object) units (§3).
-
-**Slot write events** (9.20B total):
-
-| transition | events | share | pre-merge share | post-merge share |
-|---|---:|---:|---:|---:|
-| update (x→y) | 6,109,404,842 | **66.4%** | 62.4% | 69.4% |
-| create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
-| delete (x→0) |   765,554,231 |  8.3% |  8.6% |  8.1% |
-
-**Account write events:**
-
-| source | metric | events | share | pre / post share |
-|---|---|---:|---:|---|
-| balance_diffs (8.55B) | adjust (x→y) | 7,965,568,085 | **93.1%** | 92.5% / 93.7% |
-| | fund (0→x) | 385,657,967 | 4.5% | 4.7% / 4.3% |
-| | drain (x→0) | 203,518,204 | 2.4% | 2.7% / 2.0% |
-| nonce_diffs (3.42B) | subsequent | 3,043,409,094 | **89.0%** | 89.0% / 88.9% |
-| | first use (from 0) | 376,865,812 | 11.0% | 11.0% / 11.1% |
-| contracts | creations | 100,078,703 | — | 51.3M pre / 48.8M post |
-
-(`balance_diffs` also contains 87.5M `0→0` rows — zero-value touches, 1.0% of the table —
-excluded from the shares above.)
-
-![Full-history write event mix](data/v2/history_event_totals_writes.png)
-
-Three things stand out:
-
-1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
-   slot write events ever are updates, yet 62% of slots written in a 365d window are
-   create-only (§4.1 above). Both are true at once: updates concentrate on a small hot set
-   of slots hit over and over, while creations contribute exactly one event each across an
-   enormous population. Which framing matters depends on the question — gas spent in
-   blocks tracks the event mix; state growth and tier-population tracks the object mix.
-2. **The mix is stable across eras.** Pre-merge vs post-merge moves the update
-   share by only ~7pp (62.4% → 69.4%) over seven years of regime change; the balance and
-   nonce mixes barely move at all. The structure of write traffic is a property of how
-   contracts use storage, not of any fee regime.
-3. **A third of all slots ever created have been deleted.** 766M deletes against 2.32B
-   creates — and the accounting closes: creates − deletes = 1.558B vs 1.553B live slots at
-   the anchor (**100.4%**, the 0.4% residual being net-per-tx granularity and the missing
-   system-call writes of §3). State that "dies" is a large recurring flow, consistent with
-   the C+D ephemeral-lifecycle pattern in the W_mixed decomposition.
 
 #### Write structure over time
 
