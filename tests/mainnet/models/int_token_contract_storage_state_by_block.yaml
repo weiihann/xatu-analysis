@@ -1,0 +1,59 @@
+model: int_token_contract_storage_state_by_block
+network: mainnet
+external_data:
+    canonical_execution_storage_diffs:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_storage_diffs.parquet
+        network_column: meta_network_name
+    canonical_execution_traces:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_traces.parquet
+        network_column: meta_network_name
+        optional: true
+    canonical_execution_contracts:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_contracts.parquet
+        network_column: meta_network_name
+        optional: true
+    canonical_execution_transaction:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_transaction.parquet
+        network_column: meta_network_name
+        optional: true
+    canonical_execution_erc20_transfers:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_erc20_transfers.parquet
+        network_column: meta_network_name
+    canonical_execution_erc721_transfers:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/int_token_contract_storage_state_by_block_canonical_execution_erc721_transfers.parquet
+        network_column: meta_network_name
+assertions:
+    - name: Row count should be greater than zero
+      sql: |
+        SELECT COUNT(*) AS row_count FROM int_token_contract_storage_state_by_block FINAL
+      assertions:
+        - type: greater_than
+          column: row_count
+          value: 0
+    - name: token_standard is always erc20 or erc721
+      sql: |
+        SELECT COUNT(*) AS bad_rows FROM int_token_contract_storage_state_by_block FINAL
+        WHERE token_standard NOT IN ('erc20', 'erc721')
+      assertions:
+        - type: equals
+          column: bad_rows
+          value: 0
+    - name: Cumulative active_slots is never negative
+      sql: |
+        SELECT COUNT(*) AS bad_rows FROM int_token_contract_storage_state_by_block FINAL
+        WHERE active_slots < 0
+      assertions:
+        - type: equals
+          column: bad_rows
+          value: 0
+    - name: At most two rows per block (one per standard)
+      sql: |
+        SELECT COUNT(*) AS bad_rows FROM (
+          SELECT block_number, token_standard, COUNT(*) AS c
+          FROM int_token_contract_storage_state_by_block FINAL
+          GROUP BY block_number, token_standard HAVING c > 1
+        )
+      assertions:
+        - type: equals
+          column: bad_rows
+          value: 0

@@ -1,0 +1,35 @@
+model: dim_token_contract
+network: mainnet
+external_data:
+    canonical_execution_erc20_transfers:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/dim_token_contract_canonical_execution_erc20_transfers.parquet
+        network_column: meta_network_name
+    canonical_execution_erc721_transfers:
+        url: https://data.ethpandaops.io/xatu-cbt/tests/mainnet/dim_token_contract_canonical_execution_erc721_transfers.parquet
+        network_column: meta_network_name
+assertions:
+    - name: Row count should be greater than zero
+      sql: |
+        SELECT COUNT(*) AS row_count FROM dim_token_contract FINAL
+      assertions:
+        - type: greater_than
+          column: row_count
+          value: 0
+    - name: One row per contract address
+      sql: |
+        SELECT COUNT(*) AS dupes FROM (
+          SELECT contract_address, COUNT(*) AS c FROM dim_token_contract FINAL
+          GROUP BY contract_address HAVING c > 1
+        )
+      assertions:
+        - type: equals
+          column: dupes
+          value: 0
+    - name: token_standard is always erc20 or erc721
+      sql: |
+        SELECT COUNT(*) AS bad_rows FROM dim_token_contract FINAL
+        WHERE token_standard NOT IN ('erc20', 'erc721')
+      assertions:
+        - type: equals
+          column: bad_rows
+          value: 0
