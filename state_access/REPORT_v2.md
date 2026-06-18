@@ -203,8 +203,6 @@ per-(tx, object) units (§3).
 (`balance_diffs` also contains 87.5M `0→0` rows — zero-value touches, 1.0% of the table —
 excluded from the shares above.)
 
-![Full-history write event mix](data/v2/history_event_totals_writes.png)
-
 Three things stand out:
 
 1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
@@ -252,35 +250,38 @@ window — a slot can see a type more than once. The seven classes partition |W|
 (`C+D` and `C+U+D` fold their single- and multi-cycle variants together; slots that churn
 through repeated birth/death within one window are a stable ~2–3% minority.)
 
-At the latest anchor, as a share of |W|:
+Averaged over the post-Merge sweep — each weekly anchor weighted equally (the latest
+single anchor is not representative; the chart below shows how each band moves and how
+wide it swings) — the composition of |W| is:
 
 | T (days) | C | C+U | U | C+U+D | C+D | U+D | D |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 30  | 59.6% | 4.6% | 16.1% | 2.4% | 11.4% | 0.4% | 5.5% |
-| 90  | 61.1% | 7.6% | 10.8% | 2.9% | 12.9% | 0.3% | 4.3% |
-| 180 | 63.7% | 7.6% |  9.1% | 2.9% | 12.2% | 0.3% | 4.2% |
-| 365 | 61.6% | 9.4% |  8.2% | 3.4% | 13.3% | 0.4% | 3.7% |
+| 30  | 53.3% |  8.2% | 14.4% | 2.8% | 12.1% | 0.8% | 8.4% |
+| 90  | 54.9% |  9.2% | 11.4% | 3.3% | 12.9% | 0.7% | 7.7% |
+| 180 | 55.5% | 10.0% |  9.4% | 3.7% | 13.6% | 0.6% | 7.2% |
+| 365 | 55.4% | 11.4% |  7.0% | 4.2% | 14.7% | 0.5% | 6.8% |
 
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
 Reading the composition and how it moves across the post-Merge timeline:
 
-1. **C is the floor — ~60% of |W| at every window, and steady over time.** Most slots are
-   in the write set because they were *initialized* in window and never touched again.
-   State growth, not churn.
-2. **`C+D` ephemeral state is the largest mixed class** — 11–13% of |W| — slots born and
+1. **C is the floor — ~55% of |W| at every window.** Most slots are in the write set
+   because they were *initialized* in window and never touched again — state growth, not
+   churn. It is also the most volatile class: at T=30 it swings between 38% and 68% week to
+   week, dipping through the high-throughput 2024 surge and recovering after.
+2. **`C+D` ephemeral state is the largest mixed class** — ~12–15% of |W| — slots born and
    died inside the window (temporary mappings, intermediate compute, "pending" markers
    cleaned up after use). Steady at every window across the timeline.
 3. **The in-place-modify share tracks activity.** At T=30, `U` climbed from 8% (2022) to
-   16% (2026) while `C+U` fell from 9% to 5%; through the high-throughput 2024 surge the
-   update-bearing classes swell and `C` dips (to ~38% at T=30 in late 2024) before
-   reverting. The wider windows smooth the excursion — create-dominance never inverts.
+   16% (2026) while `C+U` fell from 9% to 5%; through the 2024 surge the update-bearing
+   classes swell and `C` dips. The wider windows smooth the excursion — create-dominance
+   never inverts.
 
 The slots a write-age tiering scheme actually reprices are those carrying an **update** —
-`U ∪ C+U ∪ U+D ∪ C+U+D`, about **21% of |W|** at every window from 14d up, flat
-across the whole timeline. At T=365d that is 21% × 25.4% = **~5.4% of live state**; at
-T=30d, ~0.7%. The other ~80% of |W| is pure creation or deletion, which write-age tiering
-cannot discount — a brand-new slot has no prior write age.
+`U ∪ C+U ∪ U+D ∪ C+U+D`, roughly **a quarter of |W|** (≈23% at T=365d, ≈26% at T=30d) and
+steady over the timeline. Since |W| is ~25% of live slots at T=365d (§5.1), that is only
+**~6% of all state**; the other three-quarters of writes are pure creation or deletion,
+which write-age tiering cannot discount — a brand-new slot has no prior write age.
 
 ### 4.2 Read structure
 
