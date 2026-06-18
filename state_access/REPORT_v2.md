@@ -722,13 +722,126 @@ The clearest threads worth pulling next:
   heavy concentration (~88% top-1% for slots, ~98% for accounts). Worth a dedicated
   drill-down: which contracts dominate R-only? What's the contract-class breakdown of the
   R-only head?
-- **Historical sweep.** Snapshot is one anchor (24,870,000, 2026-04-13). Sweeping weekly
-  over the post-Merge range would tell us whether the R/W ratio is stable, whether R's
-  share grew after Dencun (blob / calldata changes), and whether the R-only-account
-  concentration spike is recent.
+- **Historical sweep — now done.** Parts I/II are a single anchor; **Part III** below
+  replays the windowed sections weekly across the whole post-Merge range. It settles the
+  questions this bullet used to pose: the R/W ratio rises over time, Dencun left no visible
+  mark on state-access structure, and the R-only-account concentration spike is recent.
 - **Per-tx all-hot fraction.** A natural follow-on: what share of transactions touch *only*
   warm state (under chosen `T`)? Per-tx framing gives a user-impact answer rather than a
   population-level one.
+
+---
+
+# Part III — Historical sweep (post-Merge)
+
+Parts I and II describe one anchor (24,870,000). This part replays the windowed sections
+at **weekly anchors** stepping back from that anchor to the Merge, at
+`T ∈ {30, 90, 180, 365}` days — 648 anchor-window cells in all (181 / 173 / 160 / 134
+anchors; each window is floored so its whole lookback stays post-Merge). Per-anchor
+live-state denominators come from the local `execution_state_size` (nearest snapshot
+≤ anchor). The newest anchor of every window reproduces the Parts I/II numbers (verified;
+the raw SSTORE-event totals drift <0.02% from ongoing `ReplacingMergeTree` dedup, so that
+check carries a 1% tolerance while the distinct-key counts match exactly). Charts annotate
+Shanghai, Dencun, Pectra, and Fusaka.
+
+The throughline: **none of these series step at a fork.** Shanghai, Dencun (blobs),
+Pectra, and Fusaka pass without visible discontinuities — state-access structure tracks
+application behaviour, not protocol changes. Dencun in particular moved calldata economics,
+not state, and the data shows it: no break in any series at March 2024. What changes is
+slow and secular.
+
+## 10. Warmth over time — the active fraction is shrinking
+
+![Warmth over time — combined](data/v2/sweep_warmth_combined.png)
+![Warmth over time — slots](data/v2/sweep_warmth_slot.png)
+![Warmth over time — accounts](data/v2/sweep_warmth_acct.png)
+
+At every window, the warm set falls as a share of live state across the timeline:
+
+| T (days) | earliest anchor | latest anchor (= snapshot) |
+|---:|---:|---:|
+| 30  |  7.6% (2022) | 4.3% |
+| 90  | 17.6% (2022) | 11.5% |
+| 180 | 29.1% (2023) | 21.4% |
+| 365 | 45.2% (2023) | 35.2% |
+
+The numerator (objects touched in a fixed-length window) is roughly stationary in absolute
+terms while the denominator (total live state) grows steadily, so the **active fraction of
+state declines monotonically**. This is the longitudinal case for tiering stated directly:
+the longer the chain runs, the larger the share of state that sits cold under any fixed
+activeness window. A scheme that prices or stores by write-age captures a *growing* fraction
+of state as Inactive over time.
+
+## 11. Reads grow relative to writes
+
+The slot R/W ratio rises over the timeline at every window — from ~0.30 near the Merge to
+~0.42–0.43 at the snapshot for T=30 and T=365 (peaking near 0.65 at T=30 during the
+2024 activity surge). The pure-read slice the `_diffs` tables can't see is not a fixed
+tax on top of writes; it is a **growing** one. Whatever fraction of warm-set mass reads
+contribute today, the trend says it was smaller in the past and is still rising.
+
+## 12. Write structure — create-dominance is activity-dependent but mean-reverting
+
+![Slot write structure over time](data/v2/sweep_write_structure.png)
+![W_mixed composition over time (T=365)](data/v2/sweep_mixed_decomp.png)
+
+Create-only's share of |W| is the noisiest series in the sweep. At T=30 it sits near 62%
+for most of the timeline but **dips to ~42% across late 2023 and 2024** before recovering
+to ~60% by 2025. That trough is the high-throughput period (heavy update activity from the
+era's dominant contracts); when activity normalizes, create-dominance reverts. The wider
+windows (T=180, T=365) smooth the dip to a shallow ~47% floor — averaging over a year
+washes out the burst. The headline from §4 — write traffic is mostly state *creation*, not
+churn — holds across the whole post-Merge range, with a single activity-driven excursion,
+never inverting.
+
+## 13. Read structure — empty-slot probes keep rising
+
+![Slot read structure over time](data/v2/sweep_read_structure.png)
+
+The zero-probe (`SLOAD → 0`) share of |R| trends **upward** at every window: T=30 from 79%
+(2022) to 83% (2026), T=365 from 91% to 93%. As the chain matures, an ever-larger share of
+read pressure is existence checks against unset slots rather than inspection of populated
+state. The §5 finding — slot R is dominated by empty-slot probes — was if anything
+*understated* by the single recent anchor; the probe share was lower earlier and is still
+climbing.
+
+## 14. Concentration — the account-read spike is recent
+
+![Concentration over time — top-1% share](data/v2/sweep_concentration.png)
+
+This is the sweep's sharpest result. The top-1% of R-only **accounts** captured ~83–87% of
+read accesses in 2022–2023 and climbed to **96–98% by 2025–2026** — at every window. The
+extreme account-read concentration noted in §6 is **not a structural constant of Ethereum;
+it emerged over the last two years**, as read traffic consolidated onto a shrinking set of
+heavily-called contracts (routers, multicall, popular implementations behind proxies). Slot
+concentration rose far more gently over the same span. The §9 open question — "is the
+R-only-account concentration spike recent?" — is answered: yes, decisively.
+
+## 15. Policy stability — §7 and §8 across 3.5 years
+
+![Warm-update coverage over time](data/v2/sweep_update_coverage.png)
+![First-op = nonzero read over time](data/v2/sweep_first_op.png)
+![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
+
+The policy counterfactuals are the most stable series in the sweep:
+
+- **Warm-update coverage (§7) is flat and high at every window across the entire timeline.**
+  T=30 stays in a 90–97% band, T=90 ~94–97%, T=180 ~96–97%, T=365 ~97–98%. Coverage is
+  monotonic in window width and barely moves over 3.5 years. The snapshot's headline —
+  94% of update SSTOREs stay Active at T=30d — is representative of the whole post-Merge
+  era, not a lucky anchor. EIP-8188-style write-age tiering would have covered update gas
+  this well at any point since the Merge.
+- **First-op = nonzero read (§8 policy-bad set) stays low throughout** — T=30 around 5–6%,
+  falling to ~2% at T=365 — with a mild bulge during the 2024 activity surge. The hypothetical
+  read-side period-bump's bad-UX set has always been a small minority of warm objects.
+- **R-only accounts grew *more* non-empty over time** — the non-empty share rose from
+  ~75% (2023) to ~93–96% (2026). The "empty accounts are free" escape hatch was always
+  small and has shrunk further: almost every R-only account now carries real balance or
+  nonce.
+
+The descriptive structure (Parts I) drifts slowly with chain age; the policy conclusions
+(Part II) are effectively time-invariant. A tiering scheme tuned on today's anchor would
+have behaved the same way at any post-Merge anchor.
 
 ---
 
@@ -1113,13 +1226,35 @@ state_access/data/v2/
   history_event_totals.parquet                       # full-history per-chunk event counts
   history_event_totals_summary.parquet               # per-(kind, metric) totals + era split
   history_event_totals_{writes,reads}.png            # full-history event-mix stacked bars
+  sweep_w{30,90,180,365}.parquet                     # Part III: one wide row per anchor
+  sweep_summary.parquet                              # Part III: all windows pooled (long)
+  sweep_warmth_{slot,acct,combined}.png              # §10 warmth over time
+  sweep_write_structure.png  sweep_mixed_decomp.png  # §12 write structure over time
+  sweep_read_structure.png                           # §13 read structure over time
+  sweep_concentration.png                            # §14 concentration over time
+  sweep_update_coverage.png  sweep_first_op.png  sweep_empty_split.png  # §15 policy over time
 ```
 
+### Part III — historical sweep (§10–§15)
+
+Two scalar-summary SQL builders (`slot_sweep_summary`, `account_sweep_summary` in
+`queries_v2.py`) reuse the per-key CTEs of the §3–§5 histograms but push the classification
+into the outer `SELECT`, so each `(anchor, T)` cell returns one row of ~20 counts instead of
+a 100k-row histogram. Concentration (§14) is reduced in-process by a tie-aware exact top-N
+band reduction (`sweep_concentration.py`); §7/§8 reuse the existing scalar builders. The
+driver `collect_v2_sweep.py` walks weekly anchors newest-first (so the snapshot anchor lands
+first and self-verifies), checkpoints one wide row per anchor with atomic temp+rename, and
+retries `DatabaseError` with backoff to ride out the node's OOM restarts. `anchors_v2(T)` in
+`config_v2.py` generates the floored weekly grid.
+
 Reproduce: `uv run python -m state_access.collect_v2 && uv run python -m state_access.collect_v2_history
-&& uv run python -m state_access.analysis_v2`.
+&& uv run python -m state_access.collect_v2_sweep && uv run python -m state_access.analysis_v2
+&& uv run python -m state_access.analysis_v2_sweep`.
 `collect_v2` is resumable per `(T, object_type)` cell; `collect_v2_history` per
-`(kind, chunk)`; delete a parquet to force a re-pull. Verification checks (additivity
-`|R∪W|=|W|+|R|`, partition sum, monotonicity, chunk tiling) live in `analysis_v2`.
+`(kind, chunk)`; `collect_v2_sweep` per `(T, anchor)` — delete a parquet to force a re-pull.
+Verification checks (additivity `|R∪W|=|W|+|R|`, partition sums, monotonicity, chunk tiling,
+and per-window snapshot equality at the newest anchor) live in `analysis_v2` /
+`analysis_v2_sweep`.
 
 ## Verification Summary
 
