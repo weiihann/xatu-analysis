@@ -1,8 +1,5 @@
 # Ethereum state access: reads, writes, and the active set
 
-> Picking this work up? Start with **`HANDOVER_v2.md`** (infra, data state, code map,
-> pending work), then this report.
-
 ## 1. Introduction
 
 Every Ethereum transaction reads and writes pieces of the chain's **state** — account
@@ -14,30 +11,24 @@ mostly create new state or modify existing state, whether reads fetch real data 
 probe for existence, and how concentrated that activity is — then asks what an
 **EIP-8188-style state-tiering** scheme would do with the result.
 
-This analysis measures Ethereum state access over trailing time windows, separating
-**writes** from **reads**. For each window it reports two disjoint sets — **W (writes)**
-and **R (pure reads, deduped against W)** — plus their union **R∪W = W + R** (the full
-warm set). It then asks, descriptively, what that state access looks like, and, as policy
-counterfactuals, what an EIP-8188-style tiering scheme would do with it.
+It measures access over trailing time windows, separating **writes** from **reads**. For
+each window it reports the set of objects **written** (`W`), the set **read but not
+written** (`R`), and their union `R∪W` — all state touched in the window, the "warm" or
+active set. `T` is the trailing window length in days (always written `T`, never `W`, to
+avoid colliding with the writes set).
 
-**Notation.** `W` / `R` / `R∪W` denote the access **sets** (writes / reads / union).
-`T` denotes the **trailing window length** in days — to avoid colliding with the writes
-set, the window is always `T`, never `W`.
-
-**EIP-8188 scope note.** As of its June 2026 draft, EIP-8188 records a
-`last_written_block` field on accounts and slots and deliberately introduces **no gas
-changes** — the Active/Inactive tiering gas schedule is left to a separate proposal. The
-policy sections here (§6.1–§6.2) model that anticipated tiering layer, with the semantics of
-the original March 2026 draft of the EIP (Active/Inactive **write** pricing by write age,
-tier evaluated before the write, reads unpriced); its calendar-period mechanics
-(`PERIOD_LENGTH`, `INACTIVE_MIN_AGE`) are idealized as a rolling `T`-day window.
-"Under EIP-8188" below is shorthand for "under a write-age tiering scheme built on
+**EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
+`last_written_block` field to every account and storage slot — consensus-level metadata
+recording when each piece of state was last mutated. It changes no gas costs itself; a
+write-age **tiering** scheme built on it would price recently-written state cheaply
+(**Active**) and long-dormant state higher (**Inactive**). The policy sections (§6.1–§6.2)
+model that tiering layer, idealizing its activeness threshold as a rolling `T`-day window;
+"under EIP-8188" below is shorthand for "under a write-age tiering scheme built on
 EIP-8188's metadata".
 
-Static snapshot, anchored at block **24,870,000** (mainnet) — the largest round block
-where all four source families (writes, slot reads, account reads, `address_appearances`)
-overlap on the local cluster. Windows: `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object
-types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
+The windowed tables throughout end at mainnet block **24,870,000**; §5.1 and §6 also replay
+them weekly across post-Merge history. Windows: `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days.
+Object types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
 
 ## 2. Summary
 
@@ -97,6 +88,8 @@ types: **storage slots** `(contract, slot)` and **accounts** `(address)`.
 | reads (accounts, direct) | `canonical_execution_balance_reads`, `canonical_execution_nonce_reads` |
 | reads (accounts, derived) | `canonical_execution_address_appearances`, filtered to relationships `{call_from, call_to, tx_from, tx_to, miner_fee, factory, create, suicide_refund, suicide}` |
 
+All source tables are the `canonical_execution_*` tables from
+[Xatu](https://github.com/ethpandaops/xatu), ethPandaOps' Ethereum data pipeline.
 `address_appearances` relationships `erc20_*` and `erc721_*` are excluded — they're token
 log-emission artifacts, not state-access events.
 
@@ -107,20 +100,12 @@ For each `(T, object_type)`:
 - **W** — objects that appear in the writes-source tables in window (raw, no dedup).
 - **R** — objects that appear in the reads-source tables AND not in the writes sources
   in the same window. Deduped against W by construction, so R ∩ W = ∅.
-- **R∪W = W + R** — additive union, the full warm set.
+- **R∪W = W + R** — their union, the full warm (active) set.
 
-**Why a 2-set additive view rather than a 3-way partition.** An earlier cut used a
-`(W-only, R-only, R∩W)` partition. Empirically **W-only ≈ 0** at every window — every
-written object is also read in the same window:
-
-- **Slots:** Solidity codegen for `x = f(x)` emits `SLOAD; ...; SSTORE`. The pre-SSTORE
-  `SLOAD` lands in `storage_reads`, so almost every modified slot is also read in window.
-- **Accounts:** every transaction's `tx_from` appears in `address_appearances` (the
-  sender's nonce is read for validation), and the same transaction emits balance / nonce
-  diffs. So every written EOA / contract is also read in window.
-
-With W-only essentially empty, the partition collapses to `W ∪ (R \ W) = R∪W`. That's the
-additive view used throughout.
+In practice almost every written object is also read in the same window — a slot's
+`SSTORE` is preceded by an `SLOAD` (`x = f(x)` codegen), and a sender's nonce is read to
+validate the transaction that writes it — so R is reported as the reads that add something
+*beyond* W, and R∪W is just the two added together.
 
 ### Granularity and known gaps
 
@@ -162,18 +147,14 @@ Set sizes are reported as a share of live state. Live-state denominators come fr
 
 Most topics below are examined three ways, presented together in one place:
 
-1. **Snapshot** — the breakdown at the anchor block above, across the eight trailing
-   windows `T`.
-2. **Full history** — additive event totals over the entire chain (genesis → anchor),
-   summed in 1M-block chunks (writes from the local node; pre-Merge reads from the
-   ethpandaops cluster, which agrees with the local copy to ~0.1%).
-3. **Over time** — the windowed snapshot **replayed at weekly anchors** from the Merge to
-   the anchor, at `T ∈ {30, 90, 180, 365}` days (648 anchor-window cells). Per-anchor
-   live-state denominators come from the local `execution_state_size`. The newest anchor
-   of every window reproduces the snapshot numbers (verified; raw event totals drift
-   <0.02% from ongoing `ReplacingMergeTree` dedup, within a 1% tolerance, while
-   distinct-key counts match exactly). The over-time charts annotate the Shanghai,
-   Dencun, Pectra, and Fusaka forks.
+1. **Windowed** — the breakdown across the eight trailing windows `T`, measured at block
+   24,870,000.
+2. **Full history** — event totals over the entire chain (genesis → block 24,870,000),
+   summed in 1M-block chunks.
+3. **Over time** — the windowed measurement **replayed at weekly anchors** from the Merge
+   onward, at `T ∈ {30, 90, 180, 365}` days (648 anchor-window cells), with per-anchor
+   live-state denominators. The over-time charts annotate the Shanghai, Dencun, Pectra,
+   and Fusaka forks.
 
 ## 4. What state access and creation looks like
 
@@ -227,7 +208,7 @@ one event of each type — the rows do not sum to 100%.
 - **21% have at least one update**; the EIP-8188-relevant subset of W.
 - **21% have at least one deletion**.
 
-The update fraction of |W| **stays remarkably stable around 20–24%** across windows from
+The update fraction of |W| **holds steady around 20–24%** across windows from
 14d to 365d (28.7% at T=7d). So **|W ∩ updates| ≈ 21% × |W|** at every T of interest. At
 T=30d that's 23.5% × 2.93% = **0.7% of live state**; at T=365d, 21.4% × 25.43% =
 **5.4% of live state**. These are the slots write-age tiering would actually reprice.
@@ -330,7 +311,7 @@ excluded from the shares above.)
 
 ![Full-history write event mix](data/v2/history_event_totals_writes.png)
 
-Three readings:
+Three things stand out:
 
 1. **Write traffic is update-dominated — the inverse of the object view.** 66% of all
    slot write events ever are updates, yet 62% of slots written in a 365d window are
@@ -338,7 +319,7 @@ Three readings:
    of slots hit over and over, while creations contribute exactly one event each across an
    enormous population. Which framing matters depends on the question — gas spent in
    blocks tracks the event mix; state growth and tier-population tracks the object mix.
-2. **The mix is remarkably stable across eras.** Pre-merge vs post-merge moves the update
+2. **The mix is stable across eras.** Pre-merge vs post-merge moves the update
    share by only ~7pp (62.4% → 69.4%) over seven years of regime change; the balance and
    nonce mixes barely move at all. The structure of write traffic is a property of how
    contracts use storage, not of any fee regime.
@@ -451,7 +432,7 @@ noise here.
 
 ![Full-history read event mix](data/v2/history_event_totals_reads.png)
 
-Three readings:
+Reading the table:
 
 1. **Read traffic is populated-read-dominated — again the inverse of the object view.**
    70% of all SLOADs ever return data, yet 93% of R-only slots at T=365d are zero-only
@@ -547,7 +528,7 @@ Two observations:
 
 At every window, the warm set falls as a share of live state across the timeline:
 
-| T (days) | earliest anchor | latest anchor (= snapshot) |
+| T (days) | earliest anchor | latest anchor (block 24,870,000) |
 |---:|---:|---:|
 | 30  |  6.8% (2022) | 4.3% |
 | 90  | 17.6% (2022) | 11.5% |
@@ -572,7 +553,7 @@ slow and secular.
 #### Reads grow relative to writes
 
 The slot R/W ratio rises over the timeline at every window — from ~0.30 near the Merge to
-~0.42–0.43 at the snapshot for T=30 and T=365 (with a T=30 peak near 0.65 in mid-2025).
+~0.42–0.43 at the latest anchor for T=30 and T=365 (with a T=30 peak near 0.65 in mid-2025).
 The pure-read slice the `_diffs` tables can't see is not a fixed tax on top of writes; it
 is a **growing** one. Whatever fraction of warm-set mass reads contribute today, the trend
 says it was smaller in the past and is still rising.
@@ -710,7 +691,7 @@ The policy counterfactuals are the most stable series in the sweep:
 
 - **Warm-update coverage (§6.1) is flat and high at every window across the entire timeline.**
   T=30 stays in a 90–97% band, T=90 ~94–97%, T=180 ~96–97%, T=365 ~97–98%. Coverage is
-  monotonic in window width and barely moves over 3.5 years. The snapshot's headline —
+  monotonic in window width and barely moves over 3.5 years. The headline —
   94% of update SSTOREs stay Active at T=30d — is representative of the whole post-Merge
   era, not a lucky anchor. EIP-8188-style write-age tiering would have covered update gas
   this well at any point since the Merge.
@@ -1284,7 +1265,7 @@ Two scalar-summary SQL builders (`slot_sweep_summary`, `account_sweep_summary` i
 into the outer `SELECT`, so each `(anchor, T)` cell returns one row of ~20 counts instead of
 a 100k-row histogram. Concentration (§5.2) is reduced in-process by a tie-aware exact top-N
 band reduction (`sweep_concentration.py`); §6.1/§6.2 reuse the existing scalar builders. The
-driver `collect_v2_sweep.py` walks weekly anchors newest-first (so the snapshot anchor lands
+driver `collect_v2_sweep.py` walks weekly anchors newest-first (so the latest anchor lands
 first and self-verifies), checkpoints one wide row per anchor with atomic temp+rename, and
 retries `DatabaseError` with backoff to ride out the node's OOM restarts. `anchors_v2(T)` in
 `config_v2.py` generates the floored weekly grid.
@@ -1295,49 +1276,5 @@ Reproduce: `uv run python -m state_access.collect_v2 && uv run python -m state_a
 `collect_v2` is resumable per `(T, object_type)` cell; `collect_v2_history` per
 `(kind, chunk)`; `collect_v2_sweep` per `(T, anchor)` — delete a parquet to force a re-pull.
 Verification checks (additivity `|R∪W|=|W|+|R|`, partition sums, monotonicity, chunk tiling,
-and per-window snapshot equality at the newest anchor) live in `analysis_v2` /
+and per-window equality with the latest-anchor numbers) live in `analysis_v2` /
 `analysis_v2_sweep`.
-
-## Verification Summary
-
-Fact-checked 2026-06-12: every numeric table was independently recomputed from the
-committed raw parquets (not via `analysis_v2.py`), the SQL appendix was diffed against
-`queries_v2.py`, the EIP-8188 characterization was checked against the EIP text (current
-and original drafts), and the source-table semantics were probed directly on the
-ClickHouse clusters.
-
-**Confirmed (unchanged):** all §5.1 warmth tables (one rounding cell aside), the §4.1
-partition and touch-rate tables, the full W_mixed decomposition (both tables), the §4.2
-%-of-state table, the §5.2 concentration tables, the §6.1 update-coverage table (exact raw
-counts), both §6.2 first-op tables, the §6.2 R-only empty/non-empty table (exact counts), the
-live-state denominators (re-queried: identical on both clusters), the anchor-coverage
-claims (`_diffs` end at 24,873,999; `_reads`/`address_appearances` at 25,189,620), the
-`relationship` filter (covers every non-ERC value present in the data), the first-op
-totals (match histogram R∪W exactly at every T), and fee-recipient capture in
-`balance_diffs`.
-
-**Corrected:**
-
-- EIP-8188 framing: the June 2026 draft is metadata-only (`last_written_block`, no gas
-  changes); added the scope note in the preamble and reworded "EIP-8188
-  reprices/prices..." claims to refer to the write-age tiering layer it enables.
-- "R∪W is 30–40% larger than W at every T" → 32–52% (+52% at T=1d; +32–37% for T≥30d).
-- "policy-relevant write set closer to 4% of state at T=365d" → 5.4%.
-- "R_mixed is identically zero by structure" → near-zero but real: 20,221 slots (0.02% of
-  |R|) at T=180d, 334,842 (0.2%) at T=365d; §4.2 T=365d shares 92.9/7.3 → 92.7/7.1.
-  Root cause (verified): net-per-tx diffs + reverted-write exclusion; the T=1d R_mixed
-  slot is the EIP-7251 system contract, the T=180d head is USDT/USDC balance slots.
-- §4.1 "(76% are pure create-only)" → 62%; "(60% → 76% over 1d→365d)" → 45% → 62%;
-  "stable 21–24% from 7d" → 20–24% from 14d (28.7% at 7d); "5.3% of live state" → 5.4%.
-- §5.1 "R grows faster than W as T increases" → inverted (W grows faster; R/W falls).
-- §5.2 "rises monotonically" → R-only dips slightly at 365d; "~14pp for slot R" → ~18pp.
-- Rounding: accounts T=365d R 4.49→4.48, R∪W 31.84→31.83; combined T=60d R 2.02→2.01.
-- Anchor date "late-Apr 2026" → 2026-04-13 (block timestamp).
-- "local `execution_state_size` is empty" → now populated, agrees with ethpandaops.
-- Added §3 "Granularity and known gaps": per-(tx, object) event units, reverted-read /
-  reverted-write asymmetry, missing system-call writes (EIP-4788/2935/7002/7251), missing
-  consensus-layer withdrawal credits (~8.5k/33k/69k unique addresses at T=1/30/365d).
-
-**Unverifiable from committed artifacts:** the §6.1 static-check figure (84.8% at T=30d) has
-no committed parquet or driver; the §6.2 claim that nonzero-read-first accounts are mostly
-view-call targets is an interpretation, not measured.
