@@ -120,6 +120,9 @@ state_access/
   queries_v2.py           # SQL builders (the actual analysis logic): 6 windowed + 8 full-history event-totals
   collect_v2.py           # drives slot/account/slot_typed histograms → data/v2/*.parquet (resumable per (T, object_type))
   collect_v2_history.py   # full-history event totals, 1M-block chunks, era-split profiles (resumable per (kind, chunk))
+  collect_v2_sweep.py     # Part III: weekly-anchor sweep of §3–§8, newest-first, resumable per (T, anchor), atomic checkpoints
+  sweep_concentration.py  # tie-aware exact top-N concentration reduction used by the sweep driver
+  analysis_v2_sweep.py    # Part III: verifies sweep rows + snapshot equality, renders the time-series charts (process-isolated kaleido)
   analysis_v2.py          # derives tables + renders all PNG charts from the parquets; `main()` runs everything
   _sweep_resume_all.py    # one-off driver that ran first_op + empty_split sweeps incrementally (idempotent; kept for re-runs)
   backfill_*.py           # the three completed backfills (§3)
@@ -161,7 +164,9 @@ Has inline verification asserts (additivity `|R∪W|=|W|+|R|`, partition sums, m
 # from repo root, with .env populated
 uv run python -m state_access.collect_v2          # slot/account/slot_typed histograms (~20 min; resumable)
 uv run python -m state_access.collect_v2_history  # full-history event totals (~10 min; resumable)
-uv run python -m state_access.analysis_v2         # derives all tables + charts from parquets (no DB; ~1 min)
+uv run python -m state_access.collect_v2_sweep    # Part III weekly sweep, T={30,90,180,365} (DAYS; resumable per (T,anchor))
+uv run python -m state_access.analysis_v2         # derives Parts I/II tables + charts (no DB; ~1 min, but kaleido is slow)
+uv run python -m state_access.analysis_v2_sweep   # Part III verification + time-series charts (no DB)
 ```
 
 `collect_v2.py` only builds the three histograms (`slot`, `account`, `slot_typed` —
@@ -200,7 +205,10 @@ to delete.
 1 Summary · 2 Data and method
 Part I  — Descriptive:  3 Warmth · 4 Write structure · 5 Read structure · 6 Concentration
 Part II — Policy:       7 Warm-update coverage (EIP-8188) · 8 Read-side period-bump first-op
-9 What this opens up · Appendix A (ALL SQL) · Appendix B (outputs)
+9 What this opens up
+Part III — Historical sweep: 10 Warmth · 11 R/W · 12 Write structure · 13 Read structure ·
+           14 Concentration · 15 Policy stability — all over post-Merge time
+Appendix A (ALL SQL) · Appendix B (outputs)
 ```
 
 Recently reorganized (commit `1d6d114`): dropped vestigial Q1/Q3 labels and the 4b/4c/4d
@@ -231,6 +239,14 @@ sections, keep that — describe v2 on its own terms.
   era-stable across the merge. Creates−deletes closes to 100.4% of live slots. Reads
   outnumber writes ~2.6:1 (slots) / ~6:1 (accounts). `nonce_reads.nonce` is never 0
   (post-increment artifact — flagged in §5).
+- **Historical sweep** (Part III, §10–§15, 648 weekly anchor-cells): the **active fraction
+  of state shrinks over time** at every window (T=365: 45%→35%) — the longitudinal tiering
+  case. **R/W rises** over time (reads matter more, not less). **§7 warm-update coverage is
+  flat and high across 3.5 years** (the 94% snapshot value is representative, not a lucky
+  anchor) — the policy conclusions are effectively time-invariant. **The account-read
+  concentration spike (~98% top-1%) is recent** — it climbed from ~85% in 2022–23, not a
+  structural constant. **No series steps at any fork** (Shanghai/Dencun/Pectra/Fusaka) —
+  state-access structure tracks application behaviour, not protocol changes.
 
 ### Known caveat (documented in §8, important)
 The `account_r_empty_split` "empty" bucket is **not confirmed-empty**. At every T the
@@ -247,11 +263,11 @@ it wasn't done because the conclusion is unaffected.
 
 ## 8. Pending / future work (explicitly out of scope so far)
 
-1. **Historical sweep.** Everything is one anchor (24.87M). Replaying the same questions
-   over weekly post-Merge anchors would show whether the R/W ratio, R-only concentration,
-   etc. are stable over time / shifted after Dencun. This is the biggest natural next step.
-   Would need a `_diffs` backfill to extend the anchor past 24.87M, or just sweep historical
-   anchors ≤ 24.87M.
+1. **Historical sweep — DONE** (Part III, §10–§15). Weekly anchors ≤ 24.87M, T={30,90,180,
+   365}, 648 cells via `collect_v2_sweep.py` → `analysis_v2_sweep.py`. Answered: R/W rises
+   over time, concentration spike is recent, no fork (incl. Dencun) moves the structure,
+   policy conclusions are time-invariant. A future extension would need a `_diffs` backfill
+   to push the anchor past 24.87M; the sweep grid floors each window at the Merge.
 2. **R-only contract-class drill-down.** Which contracts dominate R-only (the ~98% top-1%
    account concentration)? Likely DEX routers / multicall / weth9 / proxy implementations —
    unverified. Would need labelling.
