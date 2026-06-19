@@ -23,6 +23,11 @@ from state_access.history_config import FORKS, block_to_date
 
 WINDOW_COLORS = {30: "#90CAF9", 90: "#42A5F5", 180: "#1976D2", 365: "#0D47A1"}
 
+# Every time-series chart shares this left bound so the panels line up. The 365d window
+# has no anchors before late 2023, so its panel carries a blank lead-in rather than its
+# own narrower axis.
+X_AXIS_START = "2023-01-01"
+
 # Write lifecycle composition: each written slot falls in exactly one class; shares sum to
 # |W|. The six W_mixed combos collapse to four families (cycle-count split dropped). Stack
 # order runs born → grown → modified in place → ephemeral/died, with one fixed colour each.
@@ -167,8 +172,8 @@ def _composition_fig(df: pd.DataFrame, classes: list, denom_col: str, title: str
     """4-panel (one per window) stacked-area composition over time, shares to 100%."""
     windows = sorted(df["window_days"].unique())
     fig = make_subplots(
-        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
-        shared_yaxes=True, vertical_spacing=0.11, horizontal_spacing=0.06)
+        rows=2, cols=2, shared_yaxes=True, vertical_spacing=0.13,
+        horizontal_spacing=0.06)
     for i, t in enumerate(windows):
         row, col = i // 2 + 1, i % 2 + 1
         sub = df[df.window_days == t].sort_values("date")
@@ -179,9 +184,19 @@ def _composition_fig(df: pd.DataFrame, classes: list, denom_col: str, title: str
                 x=sub["date"], y=100 * num / denom, name=label, legendgroup=label,
                 showlegend=(i == 0), mode="lines", stackgroup=f"w{t}",
                 line=dict(color=color, width=0.5), fillcolor=color), row=row, col=col)
-    when = [block_to_date(b).strftime("%Y-%m-%d") for b in FORKS.values()]
-    for x in when:
+        fig.add_annotation(text=f"T = {t}d", row=row, col=col, xref="x domain",
+                           yref="y domain", x=0.02, y=0.97, showarrow=False,
+                           xanchor="left", yanchor="top",
+                           font=dict(size=13, color="#212121"),
+                           bgcolor="rgba(255,255,255,0.72)")
+    # Fork lines span every panel; label them once above the top row, clear of the fill.
+    for name, block in FORKS.items():
+        x = block_to_date(block).strftime("%Y-%m-%d")
         fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
+        for col in (1, 2):
+            fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=1, col=col,
+                               showarrow=False, yanchor="bottom", yshift=4,
+                               font=dict(size=9, color="#616161"))
     fig.update_yaxes(range=[0, 100], ticksuffix="%", gridcolor="lightgray")
     fig.update_xaxes(gridcolor="lightgray")
     fig.update_layout(
@@ -242,7 +257,9 @@ def render_all(df: pd.DataFrame) -> None:
                        "non-empty")
     charts.append(("sweep_empty_split.png", fig))
 
+    x_end = df["date"].max().strftime("%Y-%m-%d")
     for name, fig in charts:
+        fig.update_xaxes(range=[X_AXIS_START, x_end])
         write_image_safe(fig, DATA_DIR_V2 / name)
         print(f"  rendered {name}", flush=True)
 

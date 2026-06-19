@@ -171,15 +171,24 @@ equally:
 | 180 | 55.5% | 10.0% |  9.4% | 3.7% | 13.6% | 0.6% | 7.2% |
 | 365 | 55.4% | 11.4% |  7.0% | 4.2% | 14.7% | 0.5% | 6.8% |
 
-TODO: the chart is a bit weird on T = 365D. All charts should use the same x-axis. Meaning start from Jan 2023. There are the vertical lines but it's not obvious what is it. Add the fork label and make sure the label is positioned correctly and don't overlap with the chart.
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
 Findings:
 
-- **C is the most dominant across all windows, ~55% of |W|:** Most slots are initialized in window and never touched again, which is state growth rather than churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to week, dipping through the 2024 activity surge and recovering after.
-- **`C+D` is the largest mixed class, ~12–15% of |W|.** These are emphemeral slots born
-  and died inside the window. The share is steady at every window across the timeline.
-- TODO: any interesting and actual findings rather than fluff?
+- **C dominates at every window, ~55% of |W|.** Most slots are initialized in window and
+  never touched again, which is state growth rather than churn. C is also the most volatile
+  class. At T=30 it swings between 38% and 68% week to week, dipping through the 2024
+  activity surge and recovering after.
+- **`C+D` is the largest mixed class, ~12–15% of |W|.** These are ephemeral slots born and
+  died inside the window. The share is steady at every window across the timeline.
+- **Creation dominates more at longer windows.** The create-bearing classes (C, C+U, C+D,
+  C+U+D) are ~76% of |W| at T=30 and ~86% at T=365, while pure in-place updates (U) halve
+  from 14% to 7%. A longer window captures more of each slot's birth, so the write set looks
+  even more growth-driven the further back it reaches.
+- **Only a minority of writes are repriceable.** The update-bearing classes (U, C+U, U+D,
+  C+U+D) are ~a quarter of |W| (≈26% at T=30, ≈23% at T=365). A write-age tier can only
+  discount updates, so with |W| at ~25% of live slots (§5.1, T=365), the repriceable set is
+  ~5–6% of all state.
 
 ### 4.2 Read structure
 
