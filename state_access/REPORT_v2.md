@@ -5,35 +5,14 @@
 Every Ethereum transaction reads and writes pieces of the chain's **state**: account
 balances and nonces, and the storage slots inside contracts. As the chain grows, more of
 that state goes untouched for long stretches, which is why several proposals look at
-separating an active set from dormant state. This report attempts to give us insights on:
-- What state access and creation actually looks like over the course of Ethereum's history?
+separating an active set from dormant state. This report sets out to answer:
+
+- What does state access and creation look like over Ethereum's history?
 - How much state is touched over a given period?
-- Are writes mostly creations, updates or deletions? 
-- Are reads fetching real data or just probe for existence?
-- How concentrated the activity is?
-- How effective an in-protocol state-tiering scheme would be?
-
-TODO: Replace unit of analysis to the data and method section
-The unit of analysis is a trailing time window, with **writes** kept separate from
-**reads**. For each window we report the objects **written** (`W`), the objects **read but
-not written** (`R`), and their union `R∪W`, the full warm set. We write `|W|` for the number
-of objects in `W`, and likewise `|R|`. `T` is the window length in days, always written `T`
-so it never collides with the writes set `W`.
-
-TODO: EIP-8188 only records the block number. For state tiering, it's now 8295. I don't think we need to mention it in the intro section. Update accordingly.
-**EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
-`last_written_block` field to every account and storage slot, consensus-level metadata
-recording when each piece of state was last mutated. It changes no gas costs by itself. A
-write-age **tiering** scheme built on it would price recently-written state cheaply
-(**Active**) and long-dormant state higher (**Inactive**). The policy sections (§6.1, §6.2)
-model that tiering layer, treating its activeness threshold as a rolling `T`-day window.
-"Under EIP-8188" below means "under a write-age tiering scheme built on EIP-8188's
-metadata".
-
-TODO: move it to the data and method section
-The windowed tables throughout end at mainnet block **24,870,000**. §5.1 and §6 also replay
-them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}`
-days. Object types are **storage slots** `(contract, slot)` and **accounts** `(address)`.
+- Are writes mostly creations, updates, or deletions?
+- Are reads fetching real data, or just probing for existence?
+- How concentrated is the activity?
+- How effective would an in-protocol state-tiering scheme be?
 
 ## 2. Summary
 
@@ -75,6 +54,13 @@ days. Object types are **storage slots** `(contract, slot)` and **accounts** `(a
 
 ## 3. Data and method
 
+The unit of analysis is a trailing time window, with **writes** kept separate from
+**reads**. `T` is the window length in days, always written `T` so it never collides with
+the writes set `W`. The windowed tables throughout end at mainnet block **24,870,000**, and
+§5.1 and §6 also replay them weekly across post-Merge history. Windows are
+`T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are **storage slots**
+`(contract, slot)` and **accounts** `(address)`.
+
 ### Source tables
 
 All source tables are extracted from [Xatu](https://github.com/ethpandaops/xatu).
@@ -93,7 +79,10 @@ For each `(T, object_type)`:
 
 - **W**: objects created, modified, or deleted in the window.
 - **R**: objects only read, never written, in the window.
-- **R∪W = W + R**: all objects touched in the window, by a write or a read.
+- **R∪W = W + R**: all objects touched in the window, by a write or a read, the full warm
+  set.
+
+We write `|W|` for the number of objects in `W`, and likewise `|R|`.
 
 In practice every written object is also read in the same window. A slot's `SSTORE` is
 preceded by a read, and a sender's nonce is read to validate the transaction that writes
@@ -248,7 +237,7 @@ balance slots over and over. Same events-vs-objects inversion as the write side.
 
 **The read mix is era-invariant** at ~70% nonzero across the merge. Reads outnumber writes
 ~2.6:1 for slots and ~6:1 for accounts (70.7B account reads against 12.1B account writes),
-the empirical reason EIP-8188 does not reprice reads.
+the empirical reason the tiering scheme reprices writes only, not reads.
 
 **SELFDESTRUCT activity collapsed post-merge.** Suicide appearances fell from 0.34% of
 pre-merge appearance events to 0.02% after, the footprint of EIP-3529 (refund removal) and
@@ -424,12 +413,18 @@ account-read concentration is **not a structural constant of Ethereum. It emerge
 last two years**, as read traffic consolidated onto a shrinking set of heavily-called
 contracts. Slot concentration rose far more gently over the same span.
 
-## 6. EIP-8188: a state-tiering counterfactual
+## 6. EIP-8295: a state-tiering counterfactual
 
-The views above describe what state access is. This section asks what an EIP-8188-style
-write-age tiering scheme would do with it. (Recall from §1 that EIP-8188 records only the
-metadata. The Active/Inactive pricing is a separate proposal, modelled here as a
-counterfactual.)
+The views above describe what state access is. This section asks what a write-age tiering
+scheme would do with it.
+
+**EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
+`last_written_block` field to every account and storage slot, consensus-level metadata
+recording when each piece of state was last mutated. It changes no gas costs by itself.
+**EIP-8295** is the tiering scheme built on that metadata. It would price recently-written
+state cheaply (**Active**) and long-dormant state higher (**Inactive**), treating its
+activeness threshold as a rolling `T`-day window. The sections below model that layer as a
+counterfactual. "Active" and "Inactive" below refer to it.
 
 ### 6.1 Warm-update coverage
 
@@ -501,9 +496,9 @@ that is an SLOAD returning a populated value, for an account a balance or nonce 
 returning more than zero. A write or a zero read as the first event costs nothing: writes
 already refresh the metadata, and zero reads target objects that do not exist yet.
 
-Current EIP-8188 rejects read-side bumping, since a read that rewrote the trie leaf would
-cost as much as a write and break STATICCALL purity. So this section is strictly a
-counterfactual.
+EIP-8188 updates the write-age on writes only, never on reads. A scheme that bumped the
+period on a read would cost as much as a write and break STATICCALL purity, so read-side
+bumping is rejected. This section is strictly a counterfactual.
 
 #### Method
 
