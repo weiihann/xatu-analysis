@@ -5,18 +5,22 @@
 Every Ethereum transaction reads and writes pieces of the chain's **state**: account
 balances and nonces, and the storage slots inside contracts. As the chain grows, more of
 that state goes untouched for long stretches, which is why several proposals look at
-separating an active set from dormant state. This report measures what state access
-actually looks like. How much state is touched over a given period, whether writes mostly
-create new state or modify it, whether reads fetch real data or just probe for existence,
-and how concentrated the activity is. Then it asks what an **EIP-8188-style state-tiering**
-scheme would do with that.
+separating an active set from dormant state. This report attempts to give us insights on:
+- What state access and creation actually looks like over the course of Ethereum's history?
+- How much state is touched over a given period?
+- Are writes mostly creations, updates or deletions? 
+- Are reads fetching real data or just probe for existence?
+- How concentrated the activity is?
+- How effective an in-protocol state-tiering scheme would be?
 
+TODO: Replace unit of analysis to the data and method section
 The unit of analysis is a trailing time window, with **writes** kept separate from
 **reads**. For each window we report the objects **written** (`W`), the objects **read but
 not written** (`R`), and their union `R∪W`, the full warm set. We write `|W|` for the number
 of objects in `W`, and likewise `|R|`. `T` is the window length in days, always written `T`
 so it never collides with the writes set `W`.
 
+TODO: EIP-8188 only records the block number. For state tiering, it's now 8295. I don't think we need to mention it in the intro section. Update accordingly.
 **EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
 `last_written_block` field to every account and storage slot, consensus-level metadata
 recording when each piece of state was last mutated. It changes no gas costs by itself. A
@@ -26,6 +30,7 @@ model that tiering layer, treating its activeness threshold as a rolling `T`-day
 "Under EIP-8188" below means "under a write-age tiering scheme built on EIP-8188's
 metadata".
 
+TODO: move it to the data and method section
 The windowed tables throughout end at mainnet block **24,870,000**. §5.1 and §6 also replay
 them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}`
 days. Object types are **storage slots** `(contract, slot)` and **accounts** `(address)`.
