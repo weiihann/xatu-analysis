@@ -71,16 +71,15 @@ days. Object types are **storage slots** `(contract, slot)` and **accounts** `(a
 
 ### Source tables
 
+All source tables are extracted from [Xatu](https://github.com/ethpandaops/xatu).
+
 | set | source |
 |---|---|
 | writes (accounts) | `canonical_execution_balance_diffs`, `canonical_execution_nonce_diffs`, `canonical_execution_contracts` (account creation, keyed on `contract_address`) |
 | writes (slots) | `canonical_execution_storage_diffs` |
 | reads (slots) | `canonical_execution_storage_reads` |
 | reads (accounts, direct) | `canonical_execution_balance_reads`, `canonical_execution_nonce_reads` |
-| reads (accounts, derived) | `canonical_execution_address_appearances`, filtered to relationships `{call_from, call_to, tx_from, tx_to, miner_fee, factory, create, suicide_refund, suicide}` |
-
-All source tables are from
-[Xatu](https://github.com/ethpandaops/xatu).
+| reads (accounts, derived) | `canonical_execution_address_appearances`|
 
 ### Set definitions
 
@@ -100,15 +99,9 @@ it. So R counts only the explicit reads (such as `SLOAD`) that add something bey
   beacon-root, EIP-2935 blockhash-history, and EIP-7002/7251 request-queue contracts do not
   appear.
 - **Consensus-layer withdrawals are not recorded.** Validator withdrawals credit
-  execution-layer addresses without an EVM write, so withdrawal-only recipients are missing
+  execution layer addresses without an EVM write, so withdrawal-only recipients are missing
   from W. That is a few tens of thousands of addresses, well under 1% of the account write
   set.
-
-### Denominators
-
-Set sizes are reported as a share of live state. Live-state denominators come from
-`execution_state_size` at the anchor: **1,552,604,459 slots**, **379,632,901 accounts**,
-**1,932,237,360 combined**. The SQL for every query is in Appendix A.
 
 ## 4. What state access and creation looks like
 
@@ -125,9 +118,9 @@ written in a window break down by lifecycle.
 
 #### Write events over the entire chain history
 
-Every write event from the first state activity (block ~46k, July 2015) to the anchor.
+Every write event from the first state activity (block ~46k, July 2015) to the anchor (TODO: don't use anchor, state the actual block number).
 
-**Slot write events** (9.20B total):
+**Slot write events** (9.20B total) (TODO: remove pre-merge share and post-merge share):
 
 | transition | events | total share | pre-merge share | post-merge share |
 |---|---:|---:|---:|---:|
@@ -135,7 +128,7 @@ Every write event from the first state activity (block ~46k, July 2015) to the a
 | create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
 | delete (x→0) |   765,554,231 |  8.3% |  8.6% |  8.1% |
 
-**Account write events:**
+**Account write events (TODO: remove pre-merge and post-merge share):**
 
 | source | metric | events | share | pre / post share |
 |---|---|---:|---:|---|
@@ -146,42 +139,26 @@ Every write event from the first state activity (block ~46k, July 2015) to the a
 | | first use (from 0) | 376,865,812 | 11.0% | 11.0% / 11.1% |
 | contract creations | creations | 100,078,703 | n/a | 51.3M pre / 48.8M post |
 
-(Balance changes also include 87.5M `0→0` zero-value touches, 1.0% of the total, excluded
-from the shares above.)
+Two things that stand out:
 
-Three things stand out.
-
-**Write traffic is update-dominated, the inverse of the object view.** 66% of all slot
-write events ever are updates, yet 62% of slots written in a 365d window are create-only
-(the composition below). Both hold at once: updates concentrate on a small hot set of slots
-hit over and over, while creations contribute one event each across an enormous population.
-Gas spent tracks the event mix, state growth tracks the object mix.
-
-**The mix barely moves across eras.** Pre-merge to post-merge shifts the update share by
-only ~7pp (62.4% to 69.4%) over seven years, and the balance and nonce mixes hold steady.
-Write structure is a property of how contracts use storage, not of any fee regime.
-
-**A third of all slots ever created have been deleted.** 766M deletes against 2.32B
-creates, and the accounting closes: creates minus deletes is 1.558B against 1.553B live
-slots at the anchor (**100.4%**, the 0.4% from net-per-tx accounting and the unrecorded
-system-call writes). State that dies is a large recurring flow, matching the `C+D`
-ephemeral class below.
+- Write traffic is mostly update-dominated, as over 66% of all slot write events ever are updates.
+- A third of all slots ever created have been deleted.
 
 #### The lifecycle of a written slot
 
 Each write event is one of three **transition types** (values are net per transaction, §3):
 
-- **C** (create): `0 → nonzero`, an empty slot becomes set.
-- **U** (update): `nonzero → nonzero`, a set slot's value changes.
-- **D** (delete): `nonzero → 0`, a set slot is cleared.
+- **C** (create): `0 → x`, an empty slot becomes set.
+- **U** (update): `x → y`, a set slot's value changes.
+- **D** (delete): `x → 0`, a set slot is cleared.
 
 Every written slot is then classified by which transition types it saw in the window, and
-a slot can see a type more than once. The seven classes partition |W| and sum to 100%:
+a slot can see a type more than once:
 
 - **C**: created once, then untouched. A second create needs a delete first, so a C slot
   has exactly one create.
 - **U**: updated one or more times, never created or deleted. A slot that existed before
-  the window, modified in place.
+  the window and modified in place.
 - **D**: deleted once, never created or updated. A pre-existing slot cleared.
 - **C+U**: created once, then updated **one or more times**, not deleted. With no delete it
   has exactly one create, and the `+U` covers one update or many.
@@ -189,12 +166,8 @@ a slot can see a type more than once. The seven classes partition |W| and sum to
 - **U+D**: updated one or more times, then deleted. Existed before the window.
 - **C+U+D**: created, updated one or more times, and deleted, a full lifecycle.
 
-(`C+D` and `C+U+D` fold their single- and multi-cycle variants together. Slots that churn
-through repeated birth and death within one window are a stable ~2–3% minority.)
-
-The composition is averaged over the post-Merge sweep, weighting each weekly anchor
-equally. The latest single anchor is not representative, and the chart below shows how each
-band moves and how wide it swings.
+The table below shows the composition averaged over the post-Merge sweep, weighting each weekly anchor
+equally:
 
 | T (days) | C | C+U | U | C+U+D | C+D | U+D | D |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -205,9 +178,9 @@ band moves and how wide it swings.
 
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
-Reading the composition and how it moves over time.
+Findings:
 
-**C is the floor, ~55% of |W| at every window.** Most slots are in the write set because
+- **C is the floor, ~55% of |W| at every window.** Most slots are in the write set because
 they were initialized in window and never touched again, which is state growth rather than
 churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to
 week, dipping through the 2024 activity surge and recovering after.
