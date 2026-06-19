@@ -31,6 +31,14 @@ READ_RELATIONSHIPS = (
 )
 _RELATIONSHIP_LIST = ", ".join(f"'{r}'" for r in READ_RELATIONSHIPS)
 
+# Account addresses are normalized with lower() before hashing. address_appearances and
+# balance_reads store checksummed (mixed-case) addresses for blocks 15,537,394 to
+# ~20,975,000 (Merge through 2024-10-08), while balance_diffs/nonce_diffs/nonce_reads are
+# lowercase throughout. Without the lower(), the per-account hash key for a checksummed
+# read does not match the lowercase write key, the W/R join silently misses, and R is
+# inflated for any window reaching into that range. The storage tables (slot keys) are
+# lowercase everywhere, so the slot queries do not need this.
+
 
 def _window(bn_now: int, days: int) -> tuple[int, int]:
     """Inclusive block range for a trailing W-day window ending at `bn_now`."""
@@ -251,21 +259,21 @@ def account_first_op(bn_now: int, days: int) -> str:
     return f"""
 WITH all_events AS (
     SELECT
-        cityHash64(address) AS h,
+        cityHash64(lower(address)) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
         'write' AS op
     FROM canonical_execution_balance_diffs
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
-        cityHash64(address) AS h,
+        cityHash64(lower(address)) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 + 0 AS event_order,
         'write' AS op
     FROM canonical_execution_nonce_diffs
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
-        cityHash64(address) AS h,
+        cityHash64(lower(address)) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10
             + if(balance != 0, 1, 2) AS event_order,
         if(balance != 0, 'nonzero_read', 'zero_read') AS op
@@ -273,7 +281,7 @@ WITH all_events AS (
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
-        cityHash64(address) AS h,
+        cityHash64(lower(address)) AS h,
         toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10
             + if(nonce != 0, 1, 2) AS event_order,
         if(nonce != 0, 'nonzero_read', 'zero_read') AS op
@@ -281,7 +289,7 @@ WITH all_events AS (
     WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
     UNION ALL
     SELECT
-        cityHash64(address) AS h,
+        cityHash64(lower(address)) AS h,
         toUInt64(block_number) * 10000000 + 9999999 AS event_order,
         'appearance_read' AS op
     FROM canonical_execution_address_appearances
@@ -344,33 +352,33 @@ WITH per_acct AS (
         max(has_bal_read) AS has_bal_read,
         max(has_non_read) AS has_non_read
     FROM (
-        SELECT cityHash64(address) AS h, toUInt8(1) AS is_write,
+        SELECT cityHash64(lower(address)) AS h, toUInt8(1) AS is_write,
                toUInt8(0) AS bal_nonzero, toUInt8(0) AS non_nonzero,
                toUInt8(0) AS has_bal_read, toUInt8(0) AS has_non_read
         FROM canonical_execution_balance_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), toUInt8(1),
+        SELECT cityHash64(lower(address)), toUInt8(1),
                toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
         FROM canonical_execution_nonce_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(contract_address), toUInt8(1),
+        SELECT cityHash64(lower(contract_address)), toUInt8(1),
                toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
         FROM canonical_execution_contracts
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), toUInt8(0),
+        SELECT cityHash64(lower(address)), toUInt8(0),
                toUInt8(balance != 0), toUInt8(0), toUInt8(1), toUInt8(0)
         FROM canonical_execution_balance_reads
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), toUInt8(0),
+        SELECT cityHash64(lower(address)), toUInt8(0),
                toUInt8(0), toUInt8(nonce != 0), toUInt8(0), toUInt8(1)
         FROM canonical_execution_nonce_reads
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), toUInt8(0),
+        SELECT cityHash64(lower(address)), toUInt8(0),
                toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
         FROM canonical_execution_address_appearances
         WHERE meta_network_name = '{NETWORK}'
@@ -718,27 +726,27 @@ def account_sweep_summary(bn_now: int, days: int) -> str:
 WITH per_key AS (
     SELECT h, sum(is_w) AS n_w, sum(is_r) AS n_r
     FROM (
-        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 1 AS is_w, 0 AS is_r
         FROM canonical_execution_balance_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), 1, 0
+        SELECT cityHash64(lower(address)), 1, 0
         FROM canonical_execution_nonce_diffs
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(contract_address), 1, 0
+        SELECT cityHash64(lower(contract_address)), 1, 0
         FROM canonical_execution_contracts
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), 0, 1
+        SELECT cityHash64(lower(address)), 0, 1
         FROM canonical_execution_balance_reads
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), 0, 1
+        SELECT cityHash64(lower(address)), 0, 1
         FROM canonical_execution_nonce_reads
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address), 0, 1
+        SELECT cityHash64(lower(address)), 0, 1
         FROM canonical_execution_address_appearances
         WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
           AND relationship IN ({_RELATIONSHIP_LIST})
@@ -759,7 +767,7 @@ def account_histogram(bn_now: int, days: int) -> str:
     Account writes come from `balance_diffs`, `nonce_diffs`, and `contracts` (account
     creation — keyed by `contract_address`). Account reads come from `balance_reads`,
     `nonce_reads`, and `address_appearances` filtered to non-ERC* relationships. The key
-    is `cityHash64(address)`.
+    is `cityHash64(lower(address))`.
     """
     bn_lo, bn_hi = _window(bn_now, days)
     return f"""
@@ -769,32 +777,32 @@ WITH per_key AS (
         sum(is_w) AS n_w,
         sum(is_r) AS n_r
     FROM (
-        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 1 AS is_w, 0 AS is_r
         FROM canonical_execution_balance_diffs
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address) AS h, 1 AS is_w, 0 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 1 AS is_w, 0 AS is_r
         FROM canonical_execution_nonce_diffs
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(contract_address) AS h, 1 AS is_w, 0 AS is_r
+        SELECT cityHash64(lower(contract_address)) AS h, 1 AS is_w, 0 AS is_r
         FROM canonical_execution_contracts
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 0 AS is_w, 1 AS is_r
         FROM canonical_execution_balance_reads
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 0 AS is_w, 1 AS is_r
         FROM canonical_execution_nonce_reads
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
         UNION ALL
-        SELECT cityHash64(address) AS h, 0 AS is_w, 1 AS is_r
+        SELECT cityHash64(lower(address)) AS h, 0 AS is_w, 1 AS is_r
         FROM canonical_execution_address_appearances
         WHERE meta_network_name = '{NETWORK}'
           AND block_number BETWEEN {bn_lo} AND {bn_hi}
