@@ -118,30 +118,31 @@ written in a window break down by lifecycle.
 
 #### Write events over the entire chain history
 
-Every write event from the first state activity (block ~46k, July 2015) to the anchor (TODO: don't use anchor, state the actual block number).
+Every write event from the first state activity (block ~46k, July 2015) to block
+24,870,000.
 
-**Slot write events** (9.20B total) (TODO: remove pre-merge share and post-merge share):
+**Slot write events** (9.20B total):
 
-| transition | events | total share | pre-merge share | post-merge share |
-|---|---:|---:|---:|---:|
-| update (x→y) | 6,109,404,842 | **66.4%** | 62.4% | 69.4% |
-| create (0→x) | 2,323,710,153 | 25.3% | 29.0% | 22.5% |
-| delete (x→0) |   765,554,231 |  8.3% |  8.6% |  8.1% |
+| transition | events | share |
+|---|---:|---:|
+| update (x→y) | 6,109,404,842 | **66.4%** |
+| create (0→x) | 2,323,710,153 | 25.3% |
+| delete (x→0) |   765,554,231 |  8.3% |
 
-**Account write events (TODO: remove pre-merge and post-merge share):**
+**Account write events:**
 
-| source | metric | events | share | pre / post share |
-|---|---|---:|---:|---|
-| balance changes (8.55B) | adjust (x→y) | 7,965,568,085 | **93.1%** | 92.5% / 93.7% |
-| | fund (0→x) | 385,657,967 | 4.5% | 4.7% / 4.3% |
-| | drain (x→0) | 203,518,204 | 2.4% | 2.7% / 2.0% |
-| nonce changes (3.42B) | subsequent | 3,043,409,094 | **89.0%** | 89.0% / 88.9% |
-| | first use (from 0) | 376,865,812 | 11.0% | 11.0% / 11.1% |
-| contract creations | creations | 100,078,703 | n/a | 51.3M pre / 48.8M post |
+| source | metric | events | share |
+|---|---|---:|---:|
+| balance changes (8.55B) | adjust (x→y) | 7,965,568,085 | **93.1%** |
+| | fund (0→x) | 385,657,967 | 4.5% |
+| | drain (x→0) | 203,518,204 | 2.4% |
+| nonce changes (3.42B) | subsequent | 3,043,409,094 | **89.0%** |
+| | first use (from 0) | 376,865,812 | 11.0% |
+| contract creations | creations | 100,078,703 | n/a |
 
-Two things that stand out:
+Two things stand out:
 
-- Write traffic is mostly update-dominated, as over 66% of all slot write events ever are updates.
+- Write traffic is update-dominated: over 66% of all slot write events ever are updates.
 - A third of all slots ever created have been deleted.
 
 #### The lifecycle of a written slot
@@ -181,18 +182,16 @@ equally:
 Findings:
 
 - **C is the floor, ~55% of |W| at every window.** Most slots are in the write set because
-they were initialized in window and never touched again, which is state growth rather than
-churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to
-week, dipping through the 2024 activity surge and recovering after.
-
-**`C+D` ephemeral state is the largest mixed class, ~12–15% of |W|.** These are slots born
-and died inside the window: temporary mappings, intermediate compute, "pending" markers
-cleaned up after use. The share is steady at every window across the timeline.
-
-**The in-place-modify share tracks activity.** At T=30, `U` climbed from 8% in 2022 to 16%
-in 2026 while `C+U` fell from 9% to 5%. Through the 2024 surge the update-bearing classes
-swell and `C` dips. The wider windows smooth the excursion, and create-dominance never
-inverts.
+  they were initialized in window and never touched again, which is state growth rather than
+  churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to
+  week, dipping through the 2024 activity surge and recovering after.
+- **`C+D` ephemeral state is the largest mixed class, ~12–15% of |W|.** These are slots born
+  and died inside the window: temporary mappings, intermediate compute, "pending" markers
+  cleaned up after use. The share is steady at every window across the timeline.
+- **The in-place-modify share tracks activity.** At T=30, `U` climbed from 8% in 2022 to 16%
+  in 2026 while `C+U` fell from 9% to 5%. Through the 2024 surge the update-bearing classes
+  swell and `C` dips. The wider windows smooth the excursion, and create-dominance never
+  inverts.
 
 A write-age tiering scheme only reprices slots carrying an **update** (`U`, `C+U`, `U+D`,
 `C+U+D`), roughly **a quarter of |W|** (≈23% at T=365d, ≈26% at T=30d) and steady over the
