@@ -220,18 +220,19 @@ consensus-layer withdrawal (those are not recorded).
 #### What reads return
 
 Each read in R returns `zero` (an empty-slot probe, "is this slot set?") or `nonzero` (real
-data), and again R only represents objects that were read only and not written in the same window. TODO: is the table below taken by taking the average across all weekly anchors?
+data). R holds only objects read but not written in the window. As a share of |R|, averaged
+over the weekly post-Merge sweep:
 
 | T (days) | zero-only | nonzero-only |
 |---:|---:|---:|
-| 30  | 83.0% | 17.0% |
-| 90  | 88.9% | 11.1% |
-| 180 | 90.9% |  9.1% |
-| 365 | 92.7% |  7.1% |
+| 30  | 82.5% | 17.5% |
+| 90  | 87.1% | 12.8% |
+| 180 | 89.8% | 10.1% |
+| 365 | 92.6% |  7.4% |
 
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
-**Most of R is empty-slot probes**. Only ~7–17% of R is real state read (e.g. oracle parameters, config, immutable-style storage), and that share shrinks as the window widens.
+**Most of R is empty-slot probes**. Only ~7–18% of R is real state read (e.g. oracle parameters, config, immutable-style storage), and that share shrinks as the window widens.
 
 ## 5. Warmth and concentration
 
