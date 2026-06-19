@@ -13,8 +13,9 @@ scheme would do with that.
 
 The unit of analysis is a trailing time window, with **writes** kept separate from
 **reads**. For each window we report the objects **written** (`W`), the objects **read but
-not written** (`R`), and their union `R∪W`, the full warm set. `T` is the window length in
-days, always written `T` so it never collides with the writes set `W`.
+not written** (`R`), and their union `R∪W`, the full warm set. We write `|W|` for the number
+of objects in `W`, and likewise `|R|`. `T` is the window length in days, always written `T`
+so it never collides with the writes set `W`.
 
 **EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
 `last_written_block` field to every account and storage slot, consensus-level metadata
