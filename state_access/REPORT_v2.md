@@ -215,25 +215,12 @@ Every read event over all of history.
 | | selfdestruct caller / refund recipient | ~60M each | 0.14% each |
 
 The fee recipient is the block proposer credited the transaction's priority fee, not a
-consensus-layer withdrawal (those are not recorded, §3).
-
-Findings:
-
-- **Reads are populated-read-dominated, the inverse of the object view.** 70% of all SLOADs
-ever return data, yet 93% of R slots at T=365d are empty probes (below). Empty probes hit
-many distinct slots once each, while populated reads hammer a small set of config and
-balance slots over and over. Same events-vs-objects inversion as the write side.
-
-- **The read mix is era-invariant** at ~70% nonzero across the merge. Reads outnumber writes
-~2.6:1 for slots and ~6:1 for accounts (70.7B account reads against 12.1B account writes),
-the empirical reason the tiering scheme reprices writes only, not reads.
+consensus-layer withdrawal (those are not recorded).
 
 #### What reads return
 
 Each read in R returns `zero` (an empty-slot probe, "is this slot set?") or `nonzero` (real
-data). Since an R slot is never written in the window its value is stable, so the two
-classes cleanly partition |R|. Under 0.2% return both, an artifact of net-per-transaction
-accounting (§3). As a share of |R|:
+data), and again R only represents objects that were read only and not written in the same window. TODO: is the table below taken by taking the average across all weekly anchors?
 
 | T (days) | zero-only | nonzero-only |
 |---:|---:|---:|
@@ -244,20 +231,16 @@ accounting (§3). As a share of |R|:
 
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
-- **Most of R is empty-slot probes**, `SLOAD` returning 0 against unset slots: mapping
-  existence checks (`mapping[key]` is 0 if unset), `if (slot == 0)` guards, default reads.
-  Only ~7–17% of R is real state inspection (oracle parameters, config, immutable-style
-  storage), and that share shrinks as the window widens.
-- **The probe share drifts up at short windows** (T=30 from 79% in 2022 to 83% in 2026,
-  T=90 from 86% to 89%) while the long windows stay high and flat (T=180 ~91%, T=365
-  ~91–94%). Empty-probe dominance holds across the whole timeline.
+**Most of R is empty-slot probes**. Only ~7–17% of R is real state read (e.g. oracle parameters, config, immutable-style storage), and that share shrinks as the window widens.
 
 ## 5. Warmth and concentration
 
-This section sizes the activity from §4: how much of the state is "warm" (touched in a
+This section checks how much of the state is "warm" (touched in a
 window) and how concentrated the accesses are across objects.
 
 ### 5.1 Warmth: how much state is active
+
+TODO: this is data extracted from the latest anchor right? We want the average across historical sweep instead.
 
 **Slots** (% of 1.55B live slots):
 
