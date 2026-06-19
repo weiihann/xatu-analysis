@@ -55,8 +55,7 @@ separating an active set from dormant state. This report sets out to answer:
 ## 3. Data and method
 
 The unit of analysis is a trailing time window, with **writes** kept separate from
-**reads**. `T` is the window length in days, always written `T` so it never collides with
-the writes set `W`. The windowed tables throughout end at mainnet block **24,870,000**, and
+**reads**. `T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and
 §5.1 and §6 also replay them weekly across post-Merge history. Windows are
 `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are **storage slots**
 `(contract, slot)` and **accounts** `(address)`.
@@ -172,27 +171,15 @@ equally:
 | 180 | 55.5% | 10.0% |  9.4% | 3.7% | 13.6% | 0.6% | 7.2% |
 | 365 | 55.4% | 11.4% |  7.0% | 4.2% | 14.7% | 0.5% | 6.8% |
 
+TODO: the chart is a bit weird on T = 365D. All charts should use the same x-axis. Meaning start from Jan 2023. There are the vertical lines but it's not obvious what is it. Add the fork label and make sure the label is positioned correctly and don't overlap with the chart.
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
 Findings:
 
-- **C is the floor, ~55% of |W| at every window.** Most slots are in the write set because
-  they were initialized in window and never touched again, which is state growth rather than
-  churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to
-  week, dipping through the 2024 activity surge and recovering after.
-- **`C+D` ephemeral state is the largest mixed class, ~12–15% of |W|.** These are slots born
-  and died inside the window: temporary mappings, intermediate compute, "pending" markers
-  cleaned up after use. The share is steady at every window across the timeline.
-- **The in-place-modify share tracks activity.** At T=30, `U` climbed from 8% in 2022 to 16%
-  in 2026 while `C+U` fell from 9% to 5%. Through the 2024 surge the update-bearing classes
-  swell and `C` dips. The wider windows smooth the excursion, and create-dominance never
-  inverts.
-
-A write-age tiering scheme only reprices slots carrying an **update** (`U`, `C+U`, `U+D`,
-`C+U+D`), roughly **a quarter of |W|** (≈23% at T=365d, ≈26% at T=30d) and steady over the
-timeline. Since |W| is ~25% of live slots at T=365d (§5.1), that is only **~6% of all
-state**. The other three-quarters of writes are pure creation or deletion, which tiering
-cannot discount, because a brand-new slot has no prior write age.
+- **C is the most dominant across all windows, ~55% of |W|:** Most slots are initialized in window and never touched again, which is state growth rather than churn. C is also the most volatile class. At T=30 it swings between 38% and 68% week to week, dipping through the 2024 activity surge and recovering after.
+- **`C+D` is the largest mixed class, ~12–15% of |W|.** These are emphemeral slots born
+  and died inside the window. The share is steady at every window across the timeline.
+- TODO: any interesting and actual findings rather than fluff?
 
 ### 4.2 Read structure
 
