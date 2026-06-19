@@ -171,6 +171,7 @@ equally:
 | 180 | 55.5% | 10.0% |  9.4% | 3.7% | 13.6% | 0.6% | 7.2% |
 | 365 | 55.4% | 11.4% |  7.0% | 4.2% | 14.7% | 0.5% | 6.8% |
 
+TODO: the T=30d, T=90d should not be in the chart. It should be above the fork labels. For T=180d and T=365d, add the fork labels also. For T = 365d, there's a white space on the left side and the grid. Remove the grid.
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
 Findings:
@@ -185,10 +186,6 @@ Findings:
   C+U+D) are ~76% of |W| at T=30 and ~86% at T=365, while pure in-place updates (U) halve
   from 14% to 7%. A longer window captures more of each slot's birth, so the write set looks
   even more growth-driven the further back it reaches.
-- **Only a minority of writes are repriceable.** The update-bearing classes (U, C+U, U+D,
-  C+U+D) are ~a quarter of |W| (≈26% at T=30, ≈23% at T=365). A write-age tier can only
-  discount updates, so with |W| at ~25% of live slots (§5.1, T=365), the repriceable set is
-  ~5–6% of all state.
 
 ### 4.2 Read structure
 
@@ -199,6 +196,7 @@ writes, two views follow, the all-time totals and the per-window split over time
 
 Every read event over all of history.
 
+TODO: remove pre-merge and post-merge share
 **Slot read events** (23.69B total, 2.6× the write events):
 
 | returned value | events | share | pre-merge share | post-merge share |
@@ -207,6 +205,8 @@ Every read event over all of history.
 | zero | 7,138,221,664 | 30.1% | 29.8% | 30.3% |
 
 **Account read events:**
+
+TODO: the call_to, call_from, make it more concise and understandable rather than the label itself. Also, miner_fee is withdrawal deposit?
 
 | source | metric | events | share |
 |---|---|---:|---:|
@@ -218,26 +218,20 @@ Every read event over all of history.
 | | factory / create | ~100M each | 0.24% each |
 | | suicide / suicide_refund | ~60M each | 0.14% each |
 
-> Note: nonce reads never return zero (the recorded value is the sender's post-increment
-> nonce), so their zero/nonzero split is uninformative. It does not affect §6.2's
-> empty-account split, where R-only accounts have no nonce reads at all.
 
+TODO: remove this chart
 ![Full-history read event mix](data/v2/history_event_totals_reads.png)
 
-Reading the table.
+Findings:
 
-**Reads are populated-read-dominated, the inverse of the object view.** 70% of all SLOADs
+- **Reads are populated-read-dominated, the inverse of the object view.** 70% of all SLOADs
 ever return data, yet 93% of R slots at T=365d are empty probes (below). Empty probes hit
 many distinct slots once each, while populated reads hammer a small set of config and
 balance slots over and over. Same events-vs-objects inversion as the write side.
 
-**The read mix is era-invariant** at ~70% nonzero across the merge. Reads outnumber writes
+- **The read mix is era-invariant** at ~70% nonzero across the merge. Reads outnumber writes
 ~2.6:1 for slots and ~6:1 for accounts (70.7B account reads against 12.1B account writes),
 the empirical reason the tiering scheme reprices writes only, not reads.
-
-**SELFDESTRUCT activity collapsed post-merge.** Suicide appearances fell from 0.34% of
-pre-merge appearance events to 0.02% after, the footprint of EIP-3529 (refund removal) and
-EIP-6780 (same-tx-only SELFDESTRUCT).
 
 #### What reads return
 
@@ -253,6 +247,7 @@ accounting (§3). As a share of |R|:
 | 180 | 90.9% |  9.1% |
 | 365 | 92.7% |  7.1% |
 
+TODO: same feedback as the chart above. Also I wonder zero-only correlates with creations? Because write will always check the existing value, so probing for empty value.
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
 - **Most of R is empty-slot probes**, `SLOAD` returning 0 against unset slots: mapping
