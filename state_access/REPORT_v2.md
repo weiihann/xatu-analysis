@@ -171,7 +171,6 @@ equally:
 | 180 | 55.5% | 10.0% |  9.4% | 3.7% | 13.6% | 0.6% | 7.2% |
 | 365 | 55.4% | 11.4% |  7.0% | 4.2% | 14.7% | 0.5% | 6.8% |
 
-TODO: the T=30d, T=90d should not be in the chart. It should be above the fork labels. For T=180d and T=365d, add the fork labels also. For T = 365d, there's a white space on the left side and the grid. Remove the grid.
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
 Findings:
@@ -196,31 +195,27 @@ writes, two views follow, the all-time totals and the per-window split over time
 
 Every read event over all of history.
 
-TODO: remove pre-merge and post-merge share
 **Slot read events** (23.69B total, 2.6× the write events):
 
-| returned value | events | share | pre-merge share | post-merge share |
-|---|---:|---:|---:|---:|
-| nonzero | 16,552,716,483 | **69.9%** | 70.2% | 69.7% |
-| zero | 7,138,221,664 | 30.1% | 29.8% | 30.3% |
+| returned value | events | share |
+|---|---:|---:|
+| nonzero | 16,552,716,483 | **69.9%** |
+| zero | 7,138,221,664 | 30.1% |
 
 **Account read events:**
-
-TODO: the call_to, call_from, make it more concise and understandable rather than the label itself. Also, miner_fee is withdrawal deposit?
 
 | source | metric | events | share |
 |---|---|---:|---:|
 | balance reads (15.10B) | nonzero | 9,845,422,896 | **65.2%** |
 | | zero | 5,251,717,095 | 34.8% |
-| nonce reads (13.64B) | nonzero | 13,637,765,012 | 100% (see note) |
-| appearances (41.98B) | call_to / call_from | 15.74B each | 37.5% each |
-| | tx_from / miner_fee / tx_to | 3.39B each | 8.1% each |
-| | factory / create | ~100M each | 0.24% each |
-| | suicide / suicide_refund | ~60M each | 0.14% each |
+| nonce reads (13.64B) | nonzero (post-increment, never 0) | 13,637,765,012 | 100% |
+| appearances (41.98B) | internal-call target / caller | 15.74B each | 37.5% each |
+| | tx sender / fee recipient / tx recipient | 3.39B each | 8.1% each |
+| | contract creator / new contract | ~100M each | 0.24% each |
+| | selfdestruct caller / refund recipient | ~60M each | 0.14% each |
 
-
-TODO: remove this chart
-![Full-history read event mix](data/v2/history_event_totals_reads.png)
+The fee recipient is the block proposer credited the transaction's priority fee, not a
+consensus-layer withdrawal (those are not recorded, §3).
 
 Findings:
 
@@ -247,7 +242,6 @@ accounting (§3). As a share of |R|:
 | 180 | 90.9% |  9.1% |
 | 365 | 92.7% |  7.1% |
 
-TODO: same feedback as the chart above. Also I wonder zero-only correlates with creations? Because write will always check the existing value, so probing for empty value.
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
 - **Most of R is empty-slot probes**, `SLOAD` returning 0 against unset slots: mapping
