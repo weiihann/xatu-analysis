@@ -16,15 +16,14 @@ separating an active set from dormant state. This report sets out to answer:
 
 ## 2. Summary
 
-- **Writes are a small slice of live state.** `|W|` at T=30d is **2.93% of live slots**
-  and **4.07% of live accounts**. At T=365d, 25.4% / 27.4%.
-- **R is the read-only dimension a writes-only view misses.** At T=30d, **1.25% of slots
-  and 0.46% of accounts** are read but not written in window, growing to **10.6% / 4.5%**
+- **Writes are a small slice of live state.** `|W|` at T=30d is **2.82% of live slots**
+  and **3.30% of live accounts**. At T=365d, 24.2% / 23.1%.
+- **R is the read-only dimension a writes-only view misses.** At T=30d, **1.22% of slots
+  and 0.49% of accounts** are read but not written in window, growing to **9.5% / 2.7%**
   at T=365d. By construction R never overlaps W.
-- **The full warm set R∪W is 32–52% larger than W alone.** The gap is widest at small T
-  (+52% at T=1d) and settles to **+32–37% for T ≥ 30d**. At T=30d the combined warm set is
-  **4.25%** of state (vs 3.16% for writes alone), at T=365d **35.2%** (vs 25.8%). A
-  writes-only definition misses roughly a third of the warm set.
+- **The full warm set R∪W is 35–37% larger than W alone.** At T=30d the combined warm set is
+  **3.99%** of state (vs 2.91% for writes alone), at T=365d **32.3%** (vs 24.0%). A
+  writes-only definition misses about a third of the warm set.
 - **R is far more concentrated than W.** At T=30d the top 1% of objects captures **84% of
   read accesses** (slots) or **96%** (accounts), versus **62% / 61%** for writes. R is a
   long tail of one-shot view-call targets with an extremely heavy head.
@@ -242,70 +241,53 @@ window) and how concentrated the accesses are across objects.
 
 ### 5.1 Warmth: how much state is active
 
-TODO: I don't want to put the latest anchor. Use over time only, average or get the median for each window. 
+Each value is the mean across the weekly post-Merge sweep, one per window.
 
-These tables are the snapshot at the latest anchor. The over-time evolution across the
-sweep is the "Warmth over time" subsection below.
-
-**Slots** (% of 1.55B live slots):
+**Slots** (mean share of live slots):
 
 | T (days) | W | R | R∪W |
 |---:|---:|---:|---:|
-| 1   |  0.10% |  0.07% |  0.17% |
-| 7   |  0.64% |  0.36% |  0.99% |
-| 14  |  1.42% |  0.64% |  2.07% |
-| 30  |  2.93% |  1.25% |  4.18% |
-| 60  |  5.77% |  2.34% |  8.11% |
-| 90  |  7.98% |  3.28% | 11.26% |
-| 180 | 15.49% |  5.91% | 21.40% |
-| 365 | 25.43% | 10.61% | 36.05% |
+| 30  |  2.82% | 1.22% |  4.04% |
+| 90  |  7.55% | 3.07% | 10.62% |
+| 180 | 13.60% | 5.43% | 19.03% |
+| 365 | 24.17% | 9.53% | 33.70% |
 
-**Accounts** (% of 380M live accounts):
+**Accounts** (mean share of live accounts):
 
 | T (days) | W | R | R∪W |
 |---:|---:|---:|---:|
-| 1   |  0.19% |  0.04% |  0.23% |
-| 7   |  1.13% |  0.15% |  1.29% |
-| 14  |  1.93% |  0.28% |  2.21% |
-| 30  |  4.07% |  0.46% |  4.53% |
-| 60  |  7.60% |  0.69% |  8.29% |
-| 90  | 11.46% |  0.88% | 12.34% |
-| 180 | 19.04% |  2.12% | 21.16% |
-| 365 | 27.35% |  4.48% | 31.83% |
+| 30  |  3.30% | 0.49% |  3.78% |
+| 90  |  7.94% | 1.14% |  9.07% |
+| 180 | 13.45% | 1.91% | 15.35% |
+| 365 | 23.08% | 2.70% | 25.79% |
 
-**Combined**, pooling slots and accounts against the combined denominator (1.93B):
+**Combined** (slots and accounts against the combined live denominator):
 
 | T (days) | W | R | R∪W |
 |---:|---:|---:|---:|
-| 1   |  0.12% |  0.06% |  0.18% |
-| 7   |  0.74% |  0.32% |  1.05% |
-| 14  |  1.52% |  0.57% |  2.10% |
-| 30  |  3.16% |  1.10% |  4.25% |
-| 60  |  6.13% |  2.01% |  8.15% |
-| 90  |  8.66% |  2.81% | 11.47% |
-| 180 | 16.19% |  5.17% | 21.35% |
-| 365 | 25.81% |  9.41% | 35.22% |
-
-![Warmth, slots](data/v2/q1_warmth_slot.png)
-![Warmth, accounts](data/v2/q1_warmth_account.png)
-![Warmth, combined](data/v2/q1_warmth_combined.png)
+| 30  |  2.91% | 1.08% |  3.99% |
+| 90  |  7.63% | 2.72% | 10.35% |
+| 180 | 13.58% | 4.80% | 18.38% |
+| 365 | 23.99% | 8.29% | 32.28% |
 
 Two observations.
 
 **R for slots is much larger than R for accounts at every window.** At T=365d, R-slots are
-10.6% vs R-accounts 4.5%. Slot reads have a deeper unread tail (every contract has view-only
+9.5% vs R-accounts 2.7%. Slot reads have a deeper unread tail (every contract has view-only
 storage), while account reads cluster on a smaller set of popular contracts.
 
-**W grows faster than R as T increases.** For slots, R/W is 0.67× at T=1d and 0.42× at
-T=365d. For accounts it is 0.19× and 0.16×. R adds the most relative to W at small T, but
-stays above zero throughout, so reads always add something.
+**W grows faster than R as T increases.** For slots, R/W is 0.43× at T=30d and 0.39× at
+T=365d. For accounts it is 0.15× and 0.12×. R adds proportionally more at the shorter
+windows, but stays above zero throughout, so reads always add something.
 
 #### Warmth over time
 
-# We can show 1 picture for each R, W and RuW. Then put 4 charts inside for each window. 
-![Warmth over time, combined](data/v2/sweep_warmth_combined.png)
-![Warmth over time, slots](data/v2/sweep_warmth_slot.png)
-![Warmth over time, accounts](data/v2/sweep_warmth_acct.png)
+One chart per metric, with a panel per window. Each panel shows slots, accounts, and the
+combined set as a share of their live-state denominator.
+
+![Warmth over time, writes |W|](data/v2/sweep_warmth_W.png)
+![Warmth over time, read-only R](data/v2/sweep_warmth_R.png)
+![Warmth over time, warm set R∪W](data/v2/sweep_warmth_RW.png)
 
 At every window, the warm set falls as a share of live state across the timeline:
 

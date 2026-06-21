@@ -202,23 +202,54 @@ def _composition_fig(df: pd.DataFrame, classes: list, denom_col: str, title: str
     return fig
 
 
+# Each warmth chart fixes one metric (W / R / R∪W) and shows slots, accounts, and combined
+# as a share of their respective live-state denominator, one panel per window.
+WARMTH_SERIES = (
+    ("slots", "#1976D2", ("slot_{m}",), ("denom_storages",)),
+    ("accounts", "#FB8C00", ("acct_{m}",), ("denom_accounts",)),
+    ("combined", "#388E3C", ("slot_{m}", "acct_{m}"), ("denom_storages", "denom_accounts")),
+)
+
+
+def _warmth_metric_fig(df: pd.DataFrame, metric: str, title: str) -> go.Figure:
+    """4-panel (one per window) over-time chart of one warmth metric, by object type."""
+    windows = sorted(df["window_days"].unique())
+    fig = make_subplots(
+        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
+        vertical_spacing=0.16, horizontal_spacing=0.07)
+    for i, t in enumerate(windows):
+        row, col = i // 2 + 1, i % 2 + 1
+        sub = df[df.window_days == t].sort_values("date")
+        for label, color, nums, dens in WARMTH_SERIES:
+            num = sum(sub[c.format(m=metric)] for c in nums)
+            den = sum(sub[c] for c in dens)
+            fig.add_trace(go.Scatter(
+                x=sub["date"], y=100 * num / den, name=label, legendgroup=label,
+                showlegend=(i == 0), mode="lines", line=dict(color=color, width=2)),
+                row=row, col=col)
+    for name, block in FORKS.items():
+        x = block_to_date(block).strftime("%Y-%m-%d")
+        fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
+        for row in (1, 2):
+            for col in (1, 2):
+                fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=row,
+                                   col=col, showarrow=False, yanchor="bottom", yshift=3,
+                                   font=dict(size=8, color="#757575"))
+    fig.update_yaxes(ticksuffix="%", rangemode="tozero", showgrid=False)
+    fig.update_xaxes(showgrid=False)
+    fig.update_layout(
+        title=title, template="plotly_white", width=1200, height=860,
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
+    return fig
+
+
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
-    for obj, denom_col, label in (("slot", "denom_storages", "live slots"),
-                                  ("acct", "denom_accounts", "live accounts")):
-        fig = _base_fig(f"Warmth over time — {label}", f"% of {label}")
-        _add_window_traces(fig, df, lambda s, o=obj, d=denom_col:
-                           100 * s[f"{o}_RW_union"] / s[d], "R∪W")
-        _add_window_traces(fig, df, lambda s, o=obj, d=denom_col:
-                           100 * s[f"{o}_R"] / s[d], "R", dash="dash")
-        charts.append((f"sweep_warmth_{obj}.png", fig))
-
-    fig = _base_fig("Combined warmth over time — slots + accounts", "% of live state")
-    _add_window_traces(fig, df, lambda s:
-                       100 * (s.slot_RW_union + s.acct_RW_union)
-                       / (s.denom_storages + s.denom_accounts), "R∪W")
-    charts.append(("sweep_warmth_combined.png", fig))
+    for metric, fname, mlabel in (("W", "W", "writes |W|"), ("R", "R", "read-only R"),
+                                  ("RW_union", "RW", "warm set R∪W")):
+        charts.append((f"sweep_warmth_{fname}.png", _warmth_metric_fig(
+            df, metric, f"Warmth over time — {mlabel}, % of live state, by window")))
 
     charts.append(("sweep_write_composition.png", _composition_fig(
         df, WRITE_CLASSES, "slot_W",
