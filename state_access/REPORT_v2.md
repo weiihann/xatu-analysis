@@ -242,6 +242,8 @@ window) and how concentrated the accesses are across objects.
 
 ### 5.1 Warmth: how much state is active
 
+TODO: I don't want to put the latest anchor. Use over time only, average or get the median for each window. 
+
 These tables are the snapshot at the latest anchor. The over-time evolution across the
 sweep is the "Warmth over time" subsection below.
 
@@ -300,6 +302,7 @@ stays above zero throughout, so reads always add something.
 
 #### Warmth over time
 
+# We can show 1 picture for each R, W and RuW. Then put 4 charts inside for each window. 
 ![Warmth over time, combined](data/v2/sweep_warmth_combined.png)
 ![Warmth over time, slots](data/v2/sweep_warmth_slot.png)
 ![Warmth over time, accounts](data/v2/sweep_warmth_acct.png)
