@@ -43,11 +43,12 @@ separating an active set from dormant state. This report sets out to answer:
   Active price**, 97% at T=90d. The Inactive premium hits only ~3–6% of updates.
 - **The active fraction of state is shrinking over time.** As the chain ages, a
   fixed-length window touches a steadily smaller share of total state. The 365-day warm
-  set fell from ~45% in 2023 to ~35% by 2026, so the case for tiering strengthens over
+  set fell from ~41% in 2023 to ~35% by 2026, so the case for tiering strengthens over
   time.
-- **The heavy concentration of account reads is recent.** The top 1% of read-only accounts
-  captured ~85% of read accesses in 2022–2023 and ~96–98% by 2025–2026, not a structural
-  constant.
+- **Account reads are heavily concentrated, and have been throughout.** The top 1% of
+  read-only accounts captures ~96–98% of read accesses, and at the wider windows that held
+  from 2022 onward (~93–97%). Only the short 30-day window rose much, from ~87% to ~96%.
+  Read traffic lands on a tiny set of heavily-called contracts.
 - **The policy conclusions hold across 3.5 years and every fork.** Warm-update coverage
   stays flat and high at each window, and no series steps at Shanghai, Dencun, Pectra, or
   Fusaka. State access tracks application behaviour, not protocol changes.
@@ -241,7 +242,8 @@ window) and how concentrated the accesses are across objects.
 
 ### 5.1 Warmth: how much state is active
 
-TODO: this is data extracted from the latest anchor right? We want the average across historical sweep instead.
+These tables are the snapshot at the latest anchor. The over-time evolution across the
+sweep is the "Warmth over time" subsection below.
 
 **Slots** (% of 1.55B live slots):
 
@@ -306,12 +308,12 @@ At every window, the warm set falls as a share of live state across the timeline
 
 | T (days) | earliest anchor | latest anchor (block 24,870,000) |
 |---:|---:|---:|
-| 30  |  6.8% (2022) | 4.3% |
-| 90  | 17.6% (2022) | 11.5% |
-| 180 | 29.1% (2023) | 21.4% |
-| 365 | 45.2% (2023) | 35.2% |
+| 30  |  6.0% (2022) | 4.3% |
+| 90  | 15.7% (2022) | 11.5% |
+| 180 | 26.3% (2023) | 21.4% |
+| 365 | 40.7% (2023) | 35.2% |
 
-(The T=30 series peaks slightly higher, ~7.6%, in early 2023.) The objects touched in a
+(The T=30 series peaks slightly higher, ~6.7%, in early 2023.) The objects touched in a
 fixed-length window stay roughly constant in absolute terms while live state keeps growing,
 so the **active fraction trends down** at every window. Not monotone week to week, but
 clearly declining. This is the longitudinal case for tiering: the longer the chain runs,
@@ -376,11 +378,12 @@ across many contracts' storage.
 
 ![Concentration over time, top-1% share](data/v2/sweep_concentration.png)
 
-This is the sweep's sharpest result. The top 1% of R **accounts** held ~85% of read
-accesses in 2022–2023 and climbed to **96–98% by 2025–2026** at every window. The extreme
-account-read concentration is **not a structural constant of Ethereum. It emerged over the
-last two years**, as read traffic consolidated onto a shrinking set of heavily-called
-contracts. Slot concentration rose far more gently over the same span.
+Account-read concentration is extreme and has been for the whole sample. The top 1% of R
+**accounts** holds **96–98%** of read accesses at the latest anchor, and at the wider
+windows it was already there in 2022–2023 (T=90 ~93%, T=180 ~95%, T=365 ~97%). The one
+window that moved is the short 30-day one, climbing from ~87% to ~96% as read traffic
+consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and
+rose more gently (~78% to ~88% at T=365).
 
 ## 6. EIP-8295: a state-tiering counterfactual
 
@@ -565,11 +568,13 @@ dominated by non-empty objects.
 ![First-op = nonzero read over time](data/v2/sweep_first_op.png)
 ![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
 
-**The first-op bad-UX set stays low.** At T=30 it is mostly ~5–6% (spiking to ~7.5% in
-2024–2025), falling to ~2% at T=365. It has always been a small minority of warm objects.
+**The first-op bad-UX set stays a small minority**, never above ~10% of warm accounts. It
+rises over the timeline at every window, from ~1–4% in 2022–2023 to ~8–10% by 2026, as the
+read-only set fills with populated accounts. Still a minority, but a growing one.
 
-**R accounts grew more non-empty over time**, from the mid-70s in 2023 to ~93–96% in 2026.
-The empty-account free pass was always small and has shrunk further.
+**R accounts grew more non-empty over time**, from ~56–79% in 2023 (lower at the wider
+windows) to ~93–96% in 2026. The empty-account free pass was always small and has shrunk
+further.
 
 The descriptive structure drifts slowly with chain age. The policy conclusions are
 effectively time-invariant: a tiering scheme tuned on today's anchor would behave the same
