@@ -267,7 +267,7 @@ probes are excluded from the warm set.
 | 180 | 13.45% | 1.79% | 15.24% |
 | 365 | 23.08% | 2.51% | 25.59% |
 
-**Combined** (slots and accounts against the combined live denominator):
+**Combined** (slots and accounts against the total state):
 
 | T (days) | W | R⁺ | R⁺∪W |
 |---:|---:|---:|---:|
@@ -276,45 +276,25 @@ probes are excluded from the warm set.
 | 180 | 13.58% | 0.77% | 14.36% |
 | 365 | 23.99% | 1.04% | 25.03% |
 
-Two observations.
-
-**Populated reads are larger for accounts than slots.** At T=365d, R⁺ is 0.70% for slots
-versus 2.51% for accounts. This inverts the full-R picture: most slot reads are empty-slot
-probes that drop out of R⁺, while account reads are mostly of populated accounts.
-
-**W dwarfs R⁺ at every window.** R⁺/W is 0.08× (slots) and 0.14× (accounts) at T=30d,
-falling to 0.03× and 0.11× at T=365d. The populated read-only slice is a small add-on to
-the write set, not a comparable dimension.
+TODO: polish this  
+The warm set becomes larger as T increases, which makes sense because larger window allows for more state to be touched. We can see the that populated read set size is fairly insignificant compared to the write.
 
 #### Warmth over time
 
 One chart per metric, with a panel per window. Each panel shows slots, accounts, and the
 combined set as a share of their live-state denominator.
 
+TODO: the chart should be W instead of |W|? just a title change 
 ![Warmth over time, writes |W|](data/v2/sweep_warmth_W.png)
 ![Warmth over time, populated reads R⁺](data/v2/sweep_warmth_Rp.png)
 ![Warmth over time, populated warm set R⁺∪W](data/v2/sweep_warmth_RpW.png)
 
-At every window, the populated warm set R⁺∪W falls as a share of live state across the
-timeline:
+TODO: polish this
 
-| T (days) | earliest anchor | latest anchor (block 24,870,000) |
-|---:|---:|---:|
-| 30  |  5.0% (2022) | 3.4% |
-| 90  | 13.2% (2022) | 9.1% |
-| 180 | 21.4% (2023) | 17.0% |
-| 365 | 32.8% (2023) | 27.3% |
+From the write set graph, we can see that after pre-merge, the trend goes down for slots. But the accounts write set is fairly stable, until Fusaka then both started climbing again.
 
-(The T=30 series peaks slightly higher, ~5.6%, in early 2023.) The objects touched in a
-fixed-length window stay roughly constant in absolute terms while live state keeps growing,
-so the **active fraction trends down** at every window. Not monotone week to week, but
-clearly declining. This is the longitudinal case for tiering: the longer the chain runs,
-the larger the share of state that sits cold under any fixed window, so a write-age scheme
-marks a growing fraction Inactive over time.
+For the populated reads, between July 2025 and Jan 2026 there's a spike (TODO: find out what's the catalyst)
 
-**None of these series step at a fork.** Shanghai, Dencun, Pectra, and Fusaka pass without
-visible breaks. Dencun moved calldata economics, not state, and the data shows no break at
-March 2024. State-access structure tracks application behaviour, not protocol changes.
 
 #### Reads grow relative to writes
 
