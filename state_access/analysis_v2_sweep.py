@@ -246,8 +246,9 @@ def _warmth_metric_fig(df: pd.DataFrame, metric: str, title: str) -> go.Figure:
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
-    for metric, fname, mlabel in (("W", "W", "writes |W|"), ("R", "R", "read-only R"),
-                                  ("RW_union", "RW", "warm set R∪W")):
+    for metric, fname, mlabel in (("W", "W", "writes |W|"),
+                                  ("Rp", "Rp", "populated reads R⁺"),
+                                  ("RpW_union", "RpW", "populated warm set W + R⁺")):
         charts.append((f"sweep_warmth_{fname}.png", _warmth_metric_fig(
             df, metric, f"Warmth over time — {mlabel}, % of live state, by window")))
 
@@ -298,6 +299,13 @@ def main() -> None:
     verify_rows(df)
     verify_against_snapshot(df)
     verify_composition(df)
+    # R⁺ = read-not-written objects whose reads return a nonzero (populated) value: slots
+    # with a nonzero SLOAD, accounts with a positive balance/nonce read. The warm-set
+    # measure (§5.1) uses R⁺ so empty-slot probes do not count as warm.
+    df["slot_Rp"] = df["slot_R_only_nonzero"] + df["slot_R_mixed"]
+    df["acct_Rp"] = df["res_nonempty_accounts"]
+    df["slot_RpW_union"] = df["slot_W"] + df["slot_Rp"]
+    df["acct_RpW_union"] = df["acct_W"] + df["acct_Rp"]
     df.to_parquet(DATA_DIR_V2 / "sweep_summary.parquet", index=False)
     render_all(df)
     print("Done.")
