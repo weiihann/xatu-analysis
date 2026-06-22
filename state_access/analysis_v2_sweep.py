@@ -246,7 +246,7 @@ def _warmth_metric_fig(df: pd.DataFrame, metric: str, title: str) -> go.Figure:
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
-    for metric, fname, mlabel in (("W", "W", "writes |W|"),
+    for metric, fname, mlabel in (("W", "W", "write set W"),
                                   ("Rp", "Rp", "populated reads R⁺"),
                                   ("RpW_union", "RpW", "populated warm set W + R⁺")):
         charts.append((f"sweep_warmth_{fname}.png", _warmth_metric_fig(
