@@ -18,12 +18,13 @@ separating an active set from dormant state. This report sets out to answer:
 
 - **Writes are a small slice of live state.** `|W|` at T=30d is **2.82% of live slots**
   and **3.30% of live accounts**. At T=365d, 24.2% / 23.1%.
-- **R is the read-only dimension a writes-only view misses.** At T=30d, **1.22% of slots
-  and 0.49% of accounts** are read but not written in window, growing to **9.5% / 2.7%**
-  at T=365d. By construction R never overlaps W.
-- **The full warm set R∪W is 35–37% larger than W alone.** At T=30d the combined warm set is
-  **3.99%** of state (vs 2.91% for writes alone), at T=365d **32.3%** (vs 24.0%). A
-  writes-only definition misses about a third of the warm set.
+- **Populated reads (R⁺) add little beyond writes.** Counting only reads that return a
+  nonzero value, the read-only set is **0.21% of slots and 0.46% of accounts** at T=30d, and
+  **0.70% / 2.51%** at T=365d. The full read set R is far larger but is mostly empty-slot
+  probes (§4.2) that touch no populated state. By construction R⁺ never overlaps W.
+- **The populated warm set R⁺∪W is only 4–9% larger than W.** At T=30d it is **3.16%** of
+  state (vs 2.91% for writes alone), at T=365d **25.0%** (vs 24.0%). Once empty-slot probing
+  is set aside, warm populated state is essentially the write set.
 - **R is far more concentrated than W.** At T=30d the top 1% of objects captures **84% of
   read accesses** (slots) or **96%** (accounts), versus **62% / 61%** for writes. R is a
   long tail of one-shot view-call targets with an extremely heavy head.
@@ -41,8 +42,8 @@ separating an active set from dormant state. This report sets out to answer:
   event and crediting intra-window promotion, **94% of update SSTOREs at T=30d keep the
   Active price**, 97% at T=90d. The Inactive premium hits only ~3–6% of updates.
 - **The active fraction of state is shrinking over time.** As the chain ages, a
-  fixed-length window touches a steadily smaller share of total state. The 365-day warm
-  set fell from ~41% in 2023 to ~35% by 2026, so the case for tiering strengthens over
+  fixed-length window touches a steadily smaller share of total state. The 365-day populated
+  warm set fell from ~33% in 2023 to ~27% by 2026, so the case for tiering strengthens over
   time.
 - **Account reads are heavily concentrated, and have been throughout.** The top 1% of
   read-only accounts captures ~96–98% of read accesses, and at the wider windows that held
@@ -78,8 +79,11 @@ For each `(T, object_type)`:
 
 - **W**: objects created, modified, or deleted in the window.
 - **R**: objects only read, never written, in the window.
-- **R∪W = W + R**: all objects touched in the window, by a write or a read, the full warm
-  set.
+- **R⁺**: the objects in R whose reads return a nonzero (populated) value. A slot whose
+  `SLOAD` returns nonzero, or an account with a positive balance or nonce read. Most of R
+  is empty-slot probes (§4.2), so R⁺ is much smaller than R on the slot side.
+- **R∪W = W + R**: all objects touched in the window. **R⁺∪W = W + R⁺** is the populated
+  warm set, used as the warmth measure in §5.1.
 
 We write `|W|` for the number of objects in `W`, and likewise `|R|`.
 
@@ -241,44 +245,46 @@ window) and how concentrated the accesses are across objects.
 
 ### 5.1 Warmth: how much state is active
 
-Each value is the mean across the weekly post-Merge sweep, one per window.
+Each value is the mean across the weekly post-Merge sweep, one per window. The read-only
+column is **R⁺**, counting only reads that return a nonzero (populated) value, so empty-slot
+probes are excluded from the warm set.
 
 **Slots** (mean share of live slots):
 
-| T (days) | W | R | R∪W |
+| T (days) | W | R⁺ | R⁺∪W |
 |---:|---:|---:|---:|
-| 30  |  2.82% | 1.22% |  4.04% |
-| 90  |  7.55% | 3.07% | 10.62% |
-| 180 | 13.60% | 5.43% | 19.03% |
-| 365 | 24.17% | 9.53% | 33.70% |
+| 30  |  2.82% | 0.21% |  3.03% |
+| 90  |  7.55% | 0.39% |  7.95% |
+| 180 | 13.60% | 0.55% | 14.15% |
+| 365 | 24.17% | 0.70% | 24.88% |
 
 **Accounts** (mean share of live accounts):
 
-| T (days) | W | R | R∪W |
+| T (days) | W | R⁺ | R⁺∪W |
 |---:|---:|---:|---:|
-| 30  |  3.30% | 0.49% |  3.78% |
-| 90  |  7.94% | 1.14% |  9.07% |
-| 180 | 13.45% | 1.91% | 15.35% |
-| 365 | 23.08% | 2.70% | 25.79% |
+| 30  |  3.30% | 0.46% |  3.76% |
+| 90  |  7.94% | 1.07% |  9.01% |
+| 180 | 13.45% | 1.79% | 15.24% |
+| 365 | 23.08% | 2.51% | 25.59% |
 
 **Combined** (slots and accounts against the combined live denominator):
 
-| T (days) | W | R | R∪W |
+| T (days) | W | R⁺ | R⁺∪W |
 |---:|---:|---:|---:|
-| 30  |  2.91% | 1.08% |  3.99% |
-| 90  |  7.63% | 2.72% | 10.35% |
-| 180 | 13.58% | 4.80% | 18.38% |
-| 365 | 23.99% | 8.29% | 32.28% |
+| 30  |  2.91% | 0.26% |  3.16% |
+| 90  |  7.63% | 0.51% |  8.14% |
+| 180 | 13.58% | 0.77% | 14.36% |
+| 365 | 23.99% | 1.04% | 25.03% |
 
 Two observations.
 
-**R for slots is much larger than R for accounts at every window.** At T=365d, R-slots are
-9.5% vs R-accounts 2.7%. Slot reads have a deeper unread tail (every contract has view-only
-storage), while account reads cluster on a smaller set of popular contracts.
+**Populated reads are larger for accounts than slots.** At T=365d, R⁺ is 0.70% for slots
+versus 2.51% for accounts. This inverts the full-R picture: most slot reads are empty-slot
+probes that drop out of R⁺, while account reads are mostly of populated accounts.
 
-**W grows faster than R as T increases.** For slots, R/W is 0.43× at T=30d and 0.39× at
-T=365d. For accounts it is 0.15× and 0.12×. R adds proportionally more at the shorter
-windows, but stays above zero throughout, so reads always add something.
+**W dwarfs R⁺ at every window.** R⁺/W is 0.08× (slots) and 0.14× (accounts) at T=30d,
+falling to 0.03× and 0.11× at T=365d. The populated read-only slice is a small add-on to
+the write set, not a comparable dimension.
 
 #### Warmth over time
 
@@ -286,19 +292,20 @@ One chart per metric, with a panel per window. Each panel shows slots, accounts,
 combined set as a share of their live-state denominator.
 
 ![Warmth over time, writes |W|](data/v2/sweep_warmth_W.png)
-![Warmth over time, read-only R](data/v2/sweep_warmth_R.png)
-![Warmth over time, warm set R∪W](data/v2/sweep_warmth_RW.png)
+![Warmth over time, populated reads R⁺](data/v2/sweep_warmth_Rp.png)
+![Warmth over time, populated warm set R⁺∪W](data/v2/sweep_warmth_RpW.png)
 
-At every window, the warm set falls as a share of live state across the timeline:
+At every window, the populated warm set R⁺∪W falls as a share of live state across the
+timeline:
 
 | T (days) | earliest anchor | latest anchor (block 24,870,000) |
 |---:|---:|---:|
-| 30  |  6.0% (2022) | 4.3% |
-| 90  | 15.7% (2022) | 11.5% |
-| 180 | 26.3% (2023) | 21.4% |
-| 365 | 40.7% (2023) | 35.2% |
+| 30  |  5.0% (2022) | 3.4% |
+| 90  | 13.2% (2022) | 9.1% |
+| 180 | 21.4% (2023) | 17.0% |
+| 365 | 32.8% (2023) | 27.3% |
 
-(The T=30 series peaks slightly higher, ~6.7%, in early 2023.) The objects touched in a
+(The T=30 series peaks slightly higher, ~5.6%, in early 2023.) The objects touched in a
 fixed-length window stay roughly constant in absolute terms while live state keeps growing,
 so the **active fraction trends down** at every window. Not monotone week to week, but
 clearly declining. This is the longitudinal case for tiering: the longer the chain runs,
@@ -311,9 +318,10 @@ March 2024. State-access structure tracks application behaviour, not protocol ch
 
 #### Reads grow relative to writes
 
-The slot R/W ratio rises over the timeline at every window, from ~0.30 near the Merge to
-~0.42–0.43 at the latest anchor (with a T=30 peak near 0.65 in mid-2025). The read-only
-slice is not a fixed tax on top of writes. It was smaller in the past and is still growing.
+This is the full read set (R, empty-slot probes included), not R⁺. The slot R/W ratio rises
+over the timeline at every window, from ~0.30 near the Merge to ~0.42–0.43 at the latest
+anchor, with a T=30 peak near 0.65 in mid-2025. Probing traffic was smaller in the past and
+is still growing, so the read footprint is not a fixed tax on top of writes.
 
 ### 5.2 Concentration
 
