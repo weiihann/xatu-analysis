@@ -276,24 +276,29 @@ probes are excluded from the warm set.
 | 180 | 13.58% | 0.77% | 14.36% |
 | 365 | 23.99% | 1.04% | 25.03% |
 
-TODO: polish this  
-The warm set becomes larger as T increases, which makes sense because larger window allows for more state to be touched. We can see the that populated read set size is fairly insignificant compared to the write.
+The warm set grows with T at every window, since a longer window captures more state. The
+populated read set stays a small fraction of the write set throughout.
 
 #### Warmth over time
 
 One chart per metric, with a panel per window. Each panel shows slots, accounts, and the
-combined set as a share of their live-state denominator.
+combined set as a share of its live-state denominator. Combined is the pooled share, a
+denominator-weighted blend of the two, so it sits between the slot and account lines rather
+than above them.
 
-TODO: the chart should be W instead of |W|? just a title change 
-![Warmth over time, writes |W|](data/v2/sweep_warmth_W.png)
+![Warmth over time, write set W](data/v2/sweep_warmth_W.png)
 ![Warmth over time, populated reads R⁺](data/v2/sweep_warmth_Rp.png)
 ![Warmth over time, populated warm set R⁺∪W](data/v2/sweep_warmth_RpW.png)
 
-TODO: polish this
+In the write-set chart, the slot share trends down across the post-Merge timeline (live
+state grows faster than the in-window write set) while the account share holds steadier.
+Both climb from late 2025.
 
-From the write set graph, we can see that after pre-merge, the trend goes down for slots. But the accounts write set is fairly stable, until Fusaka then both started climbing again.
-
-For the populated reads, between July 2025 and Jan 2026 there's a spike (TODO: find out what's the catalyst)
+The populated-read charts carry a spike from roughly August to October 2025. This is a data
+artifact, not a real surge. The balance and nonce write tables have a gap at blocks
+23.25M–23.5M (late August to late September 2025), so accounts written there are missing
+from W and instead land in R⁺. The same gap shows as the dip in account writes over those
+months.
 
 
 #### Reads grow relative to writes
