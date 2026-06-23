@@ -267,7 +267,7 @@ probes are excluded from the warm set.
 | 180 | 13.45% | 1.79% | 15.24% |
 | 365 | 23.08% | 2.51% | 25.59% |
 
-**Combined** (slots and accounts against the total state):
+**Combined** (mean share of slots and accounts against the total state):
 
 | T (days) | W | R⁺ | R⁺∪W |
 |---:|---:|---:|---:|
@@ -277,7 +277,7 @@ probes are excluded from the warm set.
 | 365 | 23.99% | 1.04% | 25.03% |
 
 The warm set grows with T at every window, since a longer window captures more state. The
-populated read set stays a small fraction of the write set throughout.
+populated read set stays a tinys fraction of the write set throughout.
 
 #### Warmth over time
 
@@ -295,24 +295,14 @@ state grows faster than the in-window write set) while the account share holds s
 Both climb from late 2025. The populated-read set R⁺ is small at every window and grows
 gradually, more on the account side than the slot side.
 
-
-#### Reads grow relative to writes
-
-This is the full read set (R, empty-slot probes included), not R⁺. The slot R/W ratio rises
-over the timeline at every window, from ~0.30 near the Merge to ~0.42–0.43 at the latest
-anchor, with a T=30 peak near 0.65 in mid-2025. Probing traffic was smaller in the past and
-is still growing, so the read footprint is not a fixed tax on top of writes.
-
 ### 5.2 Concentration
 
-For each access set and window, the share of accesses captured by the top 1% and top 10%
-of objects. The denominator is the objects in the set, and accesses are per-(tx, object)
-units (§3).
+For each access set and window, the share of accesses captured by the top 1% objects.
+
+TODO: only look at top 1%, discard top 10% else where in the report. Also the graph is weird with vertical lines at different places. Just use a normal x-axis. Make sure the colors for the lines are consistent with the rest of the report. The graphs in the entire report should use the same color palette.  
 
 ![Concentration top-1%, slots](data/v2/q3_concentration_top1_slot.png)
-![Concentration top-10%, slots](data/v2/q3_concentration_top10_slot.png)
 ![Concentration top-1%, accounts](data/v2/q3_concentration_top1_account.png)
-![Concentration top-10%, accounts](data/v2/q3_concentration_top10_account.png)
 
 **Slots, top-1% share of accesses:**
 
@@ -332,22 +322,22 @@ units (§3).
 | 90  | 64.0% | 98.0% | 82.0% |
 | 365 | 69.0% | 98.7% | 86.4% |
 
-Three readings.
-
-**R is more concentrated than W everywhere.** At T=365d the top 1% of R slots sees ~88% of
+Findings:
+- **R is more concentrated than W everywhere.** At T=365d the top 1% of R slots sees ~88% of
 slot read accesses, and the top 1% of R accounts ~98%. A handful of popular contracts
 absorb almost all the read pressure on accounts.
 
-**Concentration grows with T.** Wider windows pull in tail keys that get few accesses, so
+- **Concentration grows with T.** Wider windows pull in tail keys that get few accesses, so
 the head's relative weight rises. The jump is sharpest from T=1d to T=30d (~18pp for slot R,
 ~17pp for account R) and flattens after.
 
-**Accounts concentrate far more tightly than slots.** At T=30d the top 1% of R accounts
+- **Accounts concentrate far more tightly than slots.** At T=30d the top 1% of R accounts
 captures 96% of accesses against 84% for slots. Account reads land on a tiny set of popular
-contracts (DEX routers, multicall, WETH, proxy implementations), while slot reads spread
-across many contracts' storage.
+contracts, while slot reads spread across many contracts' storage.
 
 #### Concentration over time
+
+TODO: split slot and account. Fix the color.
 
 ![Concentration over time, top-1% share](data/v2/sweep_concentration.png)
 
