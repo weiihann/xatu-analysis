@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .venv/
 .ipynb_checkpoints/
+state_access/data/v2/*.log
