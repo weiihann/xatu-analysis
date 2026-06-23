@@ -59,9 +59,9 @@ def _load_totals() -> dict[str, int]:
 # misleading near-zero W-only slice.
 ACCESS_TYPES = ["W", "R", "RW_union"]
 ACCESS_COLORS = {
-    "W":         "#1565C0",  # original "warm"
-    "R":         "#C2185B",  # what reads add (= old R-only)
-    "RW_union":  "#455A64",  # total warm set
+    "W":         "#1976D2",  # blue (shared report palette)
+    "R":         "#FB8C00",  # orange
+    "RW_union":  "#388E3C",  # green
 }
 ACCESS_DASH = {
     "W":         "solid",
@@ -286,7 +286,7 @@ def _plot_concentration(q3: pd.DataFrame, object_type: str, which: Literal["top_
     label = "top 1%" if which == "top_1pct_share" else "top 10%"
     fig.update_layout(
         title=f"Concentration: {label} of {object_type}s capture X% of accesses",
-        xaxis=dict(title="window T (days)", type="log", gridcolor="lightgray"),
+        xaxis=dict(title="window T (days)", type="category", gridcolor="lightgray"),
         yaxis=dict(title=f"share of accesses ({label} of objects)", ticksuffix="%",
                    gridcolor="lightgray", range=[0, 100]),
         template="plotly_white", width=1100, height=580,
@@ -693,10 +693,6 @@ def run_one(object_type: str, totals: dict[str, int]) -> None:
     fig3a = _plot_concentration(q3, object_type, "top_1pct_share")
     fig3a.write_image(DATA_DIR_V2 / f"q3_concentration_top1_{object_type}.png", scale=2)
     _show(fig3a)
-
-    fig3b = _plot_concentration(q3, object_type, "top_10pct_share")
-    fig3b.write_image(DATA_DIR_V2 / f"q3_concentration_top10_{object_type}.png", scale=2)
-    _show(fig3b)
 
 
 def run_combined(totals: dict[str, int]) -> None:

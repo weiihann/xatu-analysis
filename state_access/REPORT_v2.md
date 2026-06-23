@@ -277,7 +277,7 @@ probes are excluded from the warm set.
 | 365 | 23.99% | 1.04% | 25.03% |
 
 The warm set grows with T at every window, since a longer window captures more state. The
-populated read set stays a tinys fraction of the write set throughout.
+populated read set stays a tiny fraction of the write set throughout.
 
 #### Warmth over time
 
@@ -297,9 +297,8 @@ gradually, more on the account side than the slot side.
 
 ### 5.2 Concentration
 
-For each access set and window, the share of accesses captured by the top 1% objects.
-
-TODO: only look at top 1%, discard top 10% else where in the report. Also the graph is weird with vertical lines at different places. Just use a normal x-axis. Make sure the colors for the lines are consistent with the rest of the report. The graphs in the entire report should use the same color palette.  
+For each access set and window, the share of accesses captured by the top 1% of objects.
+Accesses are per-(tx, object) events (§3).
 
 ![Concentration top-1%, slots](data/v2/q3_concentration_top1_slot.png)
 ![Concentration top-1%, accounts](data/v2/q3_concentration_top1_account.png)
@@ -336,8 +335,6 @@ captures 96% of accesses against 84% for slots. Account reads land on a tiny set
 contracts, while slot reads spread across many contracts' storage.
 
 #### Concentration over time
-
-TODO: split slot and account. Fix the color.
 
 ![Concentration over time, top-1% share](data/v2/sweep_concentration.png)
 
@@ -936,13 +933,13 @@ state_access/data/v2/
   slot_first_op.png                                  # §6.2 slot first-op stacked bar
   account_first_op.png                               # §6.2 account first-op stacked bar
   account_r_empty_split.png                          # §6.2 R-only empty vs non-empty
-  q3_concentration_{top1,top10}_{slot,account}.png
+  q3_concentration_top1_{slot,account}.png
   history_event_totals.parquet                       # full-history per-chunk event counts
   history_event_totals_summary.parquet               # per-(kind, metric) totals + era split
   history_event_totals_{writes,reads}.png            # full-history event-mix stacked bars
   sweep_w{30,90,180,365}.parquet                     # Part III: one wide row per anchor
   sweep_summary.parquet                              # Part III: all windows pooled (long)
-  sweep_warmth_{slot,acct,combined}.png              # §5.1 warmth over time
+  sweep_warmth_{W,Rp,RpW}.png                        # §5.1 warmth over time (W / R⁺ / W+R⁺)
   sweep_write_composition.png                        # §4.1 write lifecycle composition over time
   sweep_read_composition.png                         # §4.2 read composition over time
   sweep_concentration.png                            # §5.2 concentration over time

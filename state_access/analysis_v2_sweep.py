@@ -243,6 +243,39 @@ def _warmth_metric_fig(df: pd.DataFrame, metric: str, title: str) -> go.Figure:
     return fig
 
 
+def _concentration_over_time_fig(df: pd.DataFrame) -> go.Figure:
+    """4-panel (one per window) top-1% read concentration over time, slots vs accounts."""
+    windows = sorted(df["window_days"].unique())
+    fig = make_subplots(
+        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
+        vertical_spacing=0.16, horizontal_spacing=0.07)
+    series = (("slots", "#1976D2", "conc_slot_top1_R"),
+              ("accounts", "#FB8C00", "conc_acct_top1_R"))
+    for i, t in enumerate(windows):
+        row, col = i // 2 + 1, i % 2 + 1
+        sub = df[df.window_days == t].sort_values("date")
+        for label, color, colname in series:
+            fig.add_trace(go.Scatter(
+                x=sub["date"], y=100 * sub[colname], name=label, legendgroup=label,
+                showlegend=(i == 0), mode="lines", line=dict(color=color, width=2)),
+                row=row, col=col)
+    for name, block in FORKS.items():
+        x = block_to_date(block).strftime("%Y-%m-%d")
+        fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
+        for row in (1, 2):
+            for col in (1, 2):
+                fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=row,
+                                   col=col, showarrow=False, yanchor="bottom", yshift=3,
+                                   font=dict(size=8, color="#757575"))
+    fig.update_yaxes(ticksuffix="%", rangemode="tozero", showgrid=False)
+    fig.update_xaxes(showgrid=False)
+    fig.update_layout(
+        title="Top-1% share of read accesses over time — by window",
+        template="plotly_white", width=1200, height=860,
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
+    return fig
+
+
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
@@ -259,12 +292,7 @@ def render_all(df: pd.DataFrame) -> None:
         df, READ_CLASSES, "slot_R",
         "Slot read composition over time — % of |R|, by window")))
 
-    fig = _base_fig("Concentration over time — top-1% share of accesses",
-                    "share of accesses")
-    _add_window_traces(fig, df, lambda s: 100 * s.conc_slot_top1_R, "slot R")
-    _add_window_traces(fig, df, lambda s: 100 * s.conc_acct_top1_R, "acct R",
-                       dash="dash")
-    charts.append(("sweep_concentration.png", fig))
+    charts.append(("sweep_concentration.png", _concentration_over_time_fig(df)))
 
     fig = _base_fig("Warm-update coverage over time (§7)", "% of update events warm")
     _add_window_traces(fig, df, lambda s: s.upd_pct_warm, "warm")
