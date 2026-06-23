@@ -65,7 +65,7 @@ ACCESS_COLORS = {
 }
 ACCESS_DASH = {
     "W":         "solid",
-    "R":         "dash",
+    "R":         "solid",
     "RW_union":  "solid",
 }
 def _access_count(row: pd.Series, access_type: str) -> int:
