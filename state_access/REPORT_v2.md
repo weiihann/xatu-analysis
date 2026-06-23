@@ -292,13 +292,8 @@ than above them.
 
 In the write-set chart, the slot share trends down across the post-Merge timeline (live
 state grows faster than the in-window write set) while the account share holds steadier.
-Both climb from late 2025.
-
-The populated-read charts carry a spike from roughly August to October 2025. This is a data
-artifact, not a real surge. The balance and nonce write tables have a gap at blocks
-23.25M–23.5M (late August to late September 2025), so accounts written there are missing
-from W and instead land in R⁺. The same gap shows as the dip in account writes over those
-months.
+Both climb from late 2025. The populated-read set R⁺ is small at every window and grows
+gradually, more on the account side than the slot side.
 
 
 #### Reads grow relative to writes
@@ -335,7 +330,7 @@ units (§3).
 | 1   | 40.8% | 78.9% | 57.5% |
 | 30  | 60.5% | 96.0% | 77.7% |
 | 90  | 64.0% | 98.0% | 82.0% |
-| 365 | 68.4% | 97.7% | 86.6% |
+| 365 | 69.0% | 98.7% | 86.4% |
 
 Three readings.
 
@@ -491,8 +486,8 @@ For each T, the share of accounts in R∪W by what their first event is:
 | 30  | 88.96% | 10.36% |  0.68% |
 | 60  | 90.78% |  8.48% |  0.75% |
 | 90  | 92.24% |  7.07% |  0.69% |
-| 180 | 84.85% | 10.65% |  4.51% |
-| 365 | 81.05% |  8.43% | 10.52% |
+| 180 | 92.52% |  6.76% |  0.71% |
+| 365 | 92.12% |  6.30% |  1.57% |
 
 (First = appearance read is identically 0. An appearance always loses the same-transaction
 tie-break to a balance or nonce read, because the transaction that emits an appearance also
@@ -500,10 +495,10 @@ emits those reads.)
 
 ![Account first-op classification](data/v2/account_first_op.png)
 
-The bad-UX set is more pronounced for accounts at small T: **15.75% of warm accounts at
-T=1d** have a nonzero balance or nonce read as their first event. It bottoms out near 7% at
-T=90d, then ticks back up as the zero-read band swells at T=180d/365d (4.5% / 10.5%),
-reflecting long-dormant accounts probed while empty. Most of the nonzero-read-first
+The bad-UX set is most pronounced for accounts at small T: **15.75% of warm accounts at
+T=1d** have a nonzero balance or nonce read as their first event. It declines as the window
+widens, to ~6% by T=365d, since a wider window is more likely to contain an earlier write.
+The zero-read band stays small throughout (under ~1.6%). Most of the nonzero-read-first
 accounts are view-call targets: popular contracts checked read-only before a transaction
 decides whether to interact.
 
@@ -524,11 +519,11 @@ label it once:
 | 30  |  1,752,187 | 4.24% | 95.76% | 0 |
 | 60  |  2,619,858 | 5.68% | 94.32% | 0 |
 | 90  |  3,327,941 | 5.98% | 94.02% | 0 |
-| 180 |  8,061,680 | 5.71% | 94.29% | 10 |
-| 365 | 17,025,144 | 7.34% | **92.66%** | 11 |
+| 180 |  5,654,666 | 5.87% | 94.13% | 10 |
+| 365 |  8,482,264 | 7.79% | **92.21%** | 11 |
 
-**Almost every R account is non-empty**, 93–98% across all windows, drifting only slightly
-toward empty as T grows (7.3% at T=365d). So under read-side bumping, virtually every R
+**Almost every R account is non-empty**, 92–98% across all windows, drifting only slightly
+toward empty as T grows (7.8% at T=365d). So under read-side bumping, virtually every R
 account read would bump a real period, turning a read into a write from the user's side.
 The empty-account free pass is tiny. Unknown is negligible, 11 accounts or fewer at any T.
 Even setting aside first-event reads, the pure R slice (where any read bumps a period) is
@@ -546,12 +541,13 @@ dominated by non-empty objects.
 ![First-op = nonzero read over time](data/v2/sweep_first_op.png)
 ![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
 
-**The first-op bad-UX set stays a small minority**, never above ~10% of warm accounts. It
-rises over the timeline at every window, from ~1–4% in 2022–2023 to ~8–10% by 2026, as the
-read-only set fills with populated accounts. Still a minority, but a growing one.
+**The first-op bad-UX set stays a minority**, mostly under ~10% of warm accounts, with
+short-window peaks near 20% in early 2023 and again in 2025. It rises over the timeline at
+every window, from ~1–4% in 2022–2023 to ~6–10% by 2026, as the read-only set fills with
+populated accounts. Still a minority, but a growing one.
 
 **R accounts grew more non-empty over time**, from ~56–79% in 2023 (lower at the wider
-windows) to ~93–96% in 2026. The empty-account free pass was always small and has shrunk
+windows) to ~92–96% in 2026. The empty-account free pass was always small and has shrunk
 further.
 
 The descriptive structure drifts slowly with chain age. The policy conclusions are
