@@ -300,6 +300,7 @@ gradually, more on the account side than the slot side.
 For each access set and window, the share of accesses captured by the top 1% of objects.
 Accesses are per-(tx, object) events (§3).
 
+TODO: remove the grid lines
 ![Concentration top-1%, slots](data/v2/q3_concentration_top1_slot.png)
 ![Concentration top-1%, accounts](data/v2/q3_concentration_top1_account.png)
 
@@ -350,13 +351,10 @@ rose more gently (~78% to ~88% at T=365).
 The views above describe what state access is. This section asks what a write-age tiering
 scheme would do with it.
 
-**EIP-8188** ([ethereum/EIPs#11788](https://github.com/ethereum/EIPs/pull/11788)) adds a
+[EIP-8188](https://eips.ethereum.org/EIPS/eip-8188) adds a
 `last_written_block` field to every account and storage slot, consensus-level metadata
 recording when each piece of state was last mutated. It changes no gas costs by itself.
-**EIP-8295** is the tiering scheme built on that metadata. It would price recently-written
-state cheaply (**Active**) and long-dormant state higher (**Inactive**), treating its
-activeness threshold as a rolling `T`-day window. The sections below model that layer as a
-counterfactual. "Active" and "Inactive" below refer to it.
+[EIP-8295](https://github.com/ethereum/EIPs/pull/11788) is the tiering scheme built on that metadata. It would price recently-written state cheaply (**Active**) and long-dormant state higher (**Inactive**), treating its activeness threshold as a rolling `T`-day window. The sections below model that layer as a counterfactual. "Active" and "Inactive" below refer to it.
 
 ### 6.1 Warm-update coverage
 
@@ -368,8 +366,7 @@ it is first warmed inside the window.
 
 #### Definition
 
-For each window, classify every update event (one net transition per (tx, slot), §3) as
-warm or cold:
+For each window, classify every update event as warm or cold:
 
 - **warm**: the slot was already created or updated earlier in the same window.
 - **cold**: the update is the slot's first warming event in the window. Deletions do not
@@ -379,6 +376,8 @@ So a slot's first in-window create-or-update may be cold, and every later update
 warm. The exact per-slot rule is in Appendix A.
 
 #### Results
+
+TODO: is this chart at the latest anchor? we want over time only
 
 | T (days) | total updates | warm | cold | % warm |
 |---:|---:|---:|---:|---:|
@@ -408,6 +407,8 @@ tail reactivated after a year cold. A slot has at most one cold update in a wind
 first warming.
 
 #### Coverage over time
+
+TODO: fix the chart, remove grid lines, use proper colors.
 
 ![Warm-update coverage over time](data/v2/sweep_update_coverage.png)
 
