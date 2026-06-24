@@ -276,6 +276,39 @@ def _concentration_over_time_fig(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _coverage_over_time_fig(df: pd.DataFrame) -> go.Figure:
+    """4-panel (one per window) warm-update coverage over time, slots vs accounts."""
+    windows = sorted(df["window_days"].unique())
+    fig = make_subplots(
+        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
+        vertical_spacing=0.16, horizontal_spacing=0.07)
+    series = (("slots", "#1976D2", "upd_pct_warm"),
+              ("accounts", "#FB8C00", "acct_upd_pct_warm"))
+    for i, t in enumerate(windows):
+        row, col = i // 2 + 1, i % 2 + 1
+        sub = df[df.window_days == t].sort_values("date")
+        for label, color, colname in series:
+            fig.add_trace(go.Scatter(
+                x=sub["date"], y=sub[colname], name=label, legendgroup=label,
+                showlegend=(i == 0), mode="lines", line=dict(color=color, width=2)),
+                row=row, col=col)
+    for name, block in FORKS.items():
+        x = block_to_date(block).strftime("%Y-%m-%d")
+        fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
+        for row in (1, 2):
+            for col in (1, 2):
+                fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=row,
+                                   col=col, showarrow=False, yanchor="bottom", yshift=3,
+                                   font=dict(size=8, color="#757575"))
+    fig.update_yaxes(ticksuffix="%", showgrid=False)
+    fig.update_xaxes(showgrid=False)
+    fig.update_layout(
+        title="Warm-update coverage over time — slots vs accounts, by window",
+        template="plotly_white", width=1200, height=860,
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
+    return fig
+
+
 def render_all(df: pd.DataFrame) -> None:
     charts: list[tuple[str, go.Figure]] = []
 
@@ -294,9 +327,7 @@ def render_all(df: pd.DataFrame) -> None:
 
     charts.append(("sweep_concentration.png", _concentration_over_time_fig(df)))
 
-    fig = _base_fig("Warm-update coverage over time (§6.1)", "% of update events warm")
-    _add_window_traces(fig, df, lambda s: s.upd_pct_warm, "warm")
-    charts.append(("sweep_update_coverage.png", fig))
+    charts.append(("sweep_update_coverage.png", _coverage_over_time_fig(df)))
 
     fig = _base_fig("First-op = nonzero read over time (§6.2)",
                     "% of R∪W objects")

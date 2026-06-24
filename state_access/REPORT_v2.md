@@ -40,7 +40,8 @@ separating an active set from dormant state. This report sets out to answer:
   0.2% of |R|), an artifact of net-per-transaction accounting and rolled-back writes (§3).
 - **Tiering covers update gas well at the policy-relevant window.** Counting each update
   event and crediting intra-window promotion, **94% of update SSTOREs at T=30d keep the
-  Active price**, 97% at T=90d. The Inactive premium hits only ~3–6% of updates.
+  Active price**, 97% at T=90d, and account updates run higher still (~97–99%). The Inactive
+  premium hits only ~3–6% of slot updates.
 - **The active fraction of state is shrinking over time.** As the chain ages, a
   fixed-length window touches a steadily smaller share of total state. The 365-day populated
   warm set fell from ~33% in 2023 to ~27% by 2026, so the case for tiering strengthens over
@@ -367,38 +368,47 @@ it is first warmed inside the window.
 
 For each window, classify every update event as warm or cold:
 
-- **warm**: the slot was already created or updated earlier in the same window.
-- **cold**: the update is the slot's first warming event in the window. Deletions do not
+- **warm**: the object was already created or updated earlier in the same window.
+- **cold**: the update is the object's first warming event in the window. Deletions do not
   count as warming.
 
-So a slot's first in-window create-or-update may be cold, and every later update on it is
-warm. The exact per-slot rule is in Appendix A.
+So an object's first in-window create-or-update may be cold, and every later update on it is
+warm. For slots an update is a `x→y` SSTORE and a create is `0→x`; for accounts an update is
+a balance or nonce `x→y` and a create is `0→x`. The exact per-object rule is in Appendix A.
 
 #### Coverage
 
-Each value is the mean over the weekly post-Merge sweep, one per window.
+Each value is the mean % of update events warm over the weekly post-Merge sweep.
 
-| T (days) | mean total updates | mean % warm |
+| T (days) | slot % warm | account % warm |
 |---:|---:|---:|
-| 30  |    85,279,598 | **94.1%** |
-| 90  |   253,857,845 | **95.7%** |
-| 180 |   500,752,413 | **96.7%** |
-| 365 |   996,027,189 | **97.7%** |
+| 30  | **94.1%** | **97.0%** |
+| 90  | **95.7%** | **98.0%** |
+| 180 | **96.7%** | **98.6%** |
+| 365 | **97.7%** | **99.0%** |
 
-![Warm-update coverage over time](data/v2/sweep_update_coverage.png)
+![Warm-update coverage over time, slots vs accounts](data/v2/sweep_update_coverage.png)
 
-**The Active tier covers update gas well.** ~94% of update SSTOREs at T=30d keep the cheap
-Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of updates. A naive
-check against a static past-window set undercounts this by ~9pp, judging a slot re-written
-in the window cold every time and missing intra-window promotion.
+**The Active tier covers update gas well.** ~94% of slot update SSTOREs at T=30d keep the
+cheap Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of slot updates. A
+naive check against a static past-window set undercounts this by ~9pp, judging a slot
+re-written in the window cold every time and missing intra-window promotion.
 
-**The benefit saturates fast.** Coverage climbs from ~94% at T=30d to ~98% at T=365d, only
-+4pp for a 12× window. Stretching past ~30d does little for update gas.
+**Accounts churn hotter than slots.** Account update coverage runs ~2–3pp above slots at
+every window (97.0% vs 94.1% at T=30d, 99.0% vs 97.7% at T=365d), on ~50% more update volume
+(1.5B vs 1.0B mean updates at T=365d). Balance and nonce writes land on a recently-written
+active set even more than slot SSTOREs do, so tiering would cover account update gas even
+better. The gas link is looser for accounts, though: balance and nonce changes are side
+effects of transfers and calls, not separately repriced opcodes like SSTORE.
 
-**Coverage is flat and high across the timeline.** T=30 stays in a 90–97% band, T=90
-~94–97%, T=180 ~96–97%, T=365 ~97–98%, barely moving over 3.5 years, so the headline ~94% at
-T=30d is representative, not a lucky anchor. Cold updates are first-touch awakenings of
-dormant state, ~23M slots at T=365d reactivated after a year.
+**The benefit saturates fast.** Slot coverage climbs from ~94% at T=30d to ~98% at T=365d,
+only +4pp for a 12× window, and accounts are flatter still (~97% to ~99%). Stretching past
+~30d does little for update gas.
+
+**Coverage is flat and high across the timeline.** Slot coverage sits in a 90–97% band at
+T=30 rising to ~97–98% at T=365, accounts ~97–99%, barely moving over 3.5 years and stepping
+at no fork, so the headline numbers are representative, not a lucky anchor. Cold updates are
+first-touch awakenings of dormant state, ~23M slots at T=365d reactivated after a year.
 
 ### 6.2 Read-side period bump
 
@@ -753,6 +763,12 @@ FROM per_slot
 
 `event_order` packs `(block_number, transaction_index, internal_index)` into a single
 monotone UInt64 (block numbers fit easily, `25M × 1e9 ≈ 2.5e16`, well below UInt64 max).
+
+The account analog (`account_update_coverage`) applies the same warm/cold rule over
+`balance_diffs` ∪ `nonce_diffs` keyed on the account, with a create being a balance/nonce
+`0→x` and an update a `x→y`. `contracts` is dropped (no `transaction_index`, and a contract
+creation already emits a nonce `0→1` diff), and `event_order` packs `(block, tx_index,
+op_priority)` with create before update.
 
 ### First-operation classification (§6.2)
 
