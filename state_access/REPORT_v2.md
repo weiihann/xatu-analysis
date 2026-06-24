@@ -300,7 +300,6 @@ gradually, more on the account side than the slot side.
 For each access set and window, the share of accesses captured by the top 1% of objects.
 Accesses are per-(tx, object) events (§3).
 
-TODO: remove the grid lines
 ![Concentration top-1%, slots](data/v2/q3_concentration_top1_slot.png)
 ![Concentration top-1%, accounts](data/v2/q3_concentration_top1_account.png)
 
@@ -375,47 +374,31 @@ For each window, classify every update event as warm or cold:
 So a slot's first in-window create-or-update may be cold, and every later update on it is
 warm. The exact per-slot rule is in Appendix A.
 
-#### Results
+#### Coverage
 
-TODO: is this chart at the latest anchor? we want over time only
+Each value is the mean over the weekly post-Merge sweep, one per window.
 
-| T (days) | total updates | warm | cold | % warm |
-|---:|---:|---:|---:|---:|
-| 1   |     3,827,500 |     3,277,106 |     550,394 | **85.62%** |
-| 7   |    28,158,628 |    25,937,983 |   2,220,645 | **92.11%** |
-| 14  |    55,135,247 |    51,051,775 |   4,083,472 | **92.59%** |
-| 30  |   125,684,703 |   117,983,724 |   7,700,979 | **93.87%** |
-| 60  |   262,053,193 |   251,043,962 |  11,009,231 | **95.80%** |
-| 90  |   402,058,353 |   387,899,906 |  14,158,447 | **96.48%** |
-| 180 |   788,431,719 |   765,249,545 |  23,182,174 | **97.06%** |
-| 365 | 1,424,321,470 | 1,389,975,882 |  34,345,588 | **97.59%** |
-
-![Slot update coverage, warm vs cold](data/v2/slot_update_coverage.png)
-
-A naive check against a static past-window set gives only **84.8% at T=30d**, a ~9pp
-underestimate of the per-event **93.9%**. The gap is intra-window promotion: slots first
-written inside the window, then hit again. Three readings.
-
-**The Active tier covers update gas well.** At T=30d, **94%** of update SSTOREs keep the
-cheap Active price, 97% at T=90d. The Inactive premium hits only ~3–6% of updates.
-
-**The benefit saturates fast.** T=1d to 30d buys +8pp of coverage, T=30d to 365d only
-another +3.7pp. Stretching the window past ~30d does little for update gas.
-
-**Cold updates are first-touch awakenings of dormant state.** 34.3M slots at T=365d, the
-tail reactivated after a year cold. A slot has at most one cold update in a window, its
-first warming.
-
-#### Coverage over time
-
-TODO: fix the chart, remove grid lines, use proper colors.
+| T (days) | mean total updates | mean % warm |
+|---:|---:|---:|
+| 30  |    85,279,598 | **94.1%** |
+| 90  |   253,857,845 | **95.7%** |
+| 180 |   500,752,413 | **96.7%** |
+| 365 |   996,027,189 | **97.7%** |
 
 ![Warm-update coverage over time](data/v2/sweep_update_coverage.png)
 
-Warm-update coverage is flat and high at every window across the timeline. T=30 stays in a
-90–97% band, T=90 ~94–97%, T=180 ~96–97%, T=365 ~97–98%. It rises with window width and
-barely moves over 3.5 years. The headline 94% at T=30d is representative of the whole
-post-Merge era, not a lucky anchor.
+**The Active tier covers update gas well.** ~94% of update SSTOREs at T=30d keep the cheap
+Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of updates. A naive
+check against a static past-window set undercounts this by ~9pp, judging a slot re-written
+in the window cold every time and missing intra-window promotion.
+
+**The benefit saturates fast.** Coverage climbs from ~94% at T=30d to ~98% at T=365d, only
++4pp for a 12× window. Stretching past ~30d does little for update gas.
+
+**Coverage is flat and high across the timeline.** T=30 stays in a 90–97% band, T=90
+~94–97%, T=180 ~96–97%, T=365 ~97–98%, barely moving over 3.5 years, so the headline ~94% at
+T=30d is representative, not a lucky anchor. Cold updates are first-touch awakenings of
+dormant state, ~23M slots at T=365d reactivated after a year.
 
 ### 6.2 Read-side period bump
 

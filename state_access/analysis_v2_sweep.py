@@ -21,7 +21,7 @@ from plotly.subplots import make_subplots
 from state_access.config_v2 import ANCHOR_BLOCK_V2, DATA_DIR_V2, SWEEP_WINDOWS
 from state_access.history_config import FORKS, block_to_date
 
-WINDOW_COLORS = {30: "#90CAF9", 90: "#42A5F5", 180: "#1976D2", 365: "#0D47A1"}
+WINDOW_COLORS = {30: "#1976D2", 90: "#FB8C00", 180: "#388E3C", 365: "#8E24AA"}
 
 # Every time-series chart shares this left bound so the panels line up. The 365d window
 # has no anchors before late 2023, so its panel carries a blank lead-in rather than its
@@ -134,8 +134,8 @@ def _base_fig(title: str, ytitle: str) -> go.Figure:
     fig = go.Figure()
     fig.update_layout(
         title=title,
-        xaxis=dict(title="anchor date", gridcolor="lightgray"),
-        yaxis=dict(title=ytitle, ticksuffix="%", gridcolor="lightgray",
+        xaxis=dict(title="anchor date", showgrid=False),
+        yaxis=dict(title=ytitle, ticksuffix="%", showgrid=False,
                    rangemode="tozero"),
         template="plotly_white", width=1100, height=560,
         legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
@@ -294,11 +294,11 @@ def render_all(df: pd.DataFrame) -> None:
 
     charts.append(("sweep_concentration.png", _concentration_over_time_fig(df)))
 
-    fig = _base_fig("Warm-update coverage over time (§7)", "% of update events warm")
+    fig = _base_fig("Warm-update coverage over time (§6.1)", "% of update events warm")
     _add_window_traces(fig, df, lambda s: s.upd_pct_warm, "warm")
     charts.append(("sweep_update_coverage.png", fig))
 
-    fig = _base_fig("First-op = nonzero read over time (§8 policy-bad set)",
+    fig = _base_fig("First-op = nonzero read over time (§6.2)",
                     "% of R∪W objects")
     _add_window_traces(fig, df, lambda s:
                        100 * s.sfo_first_is_nonzero_read / s.sfo_total_slots, "slots")
@@ -307,7 +307,7 @@ def render_all(df: pd.DataFrame) -> None:
                        "accounts", dash="dash")
     charts.append(("sweep_first_op.png", fig))
 
-    fig = _base_fig("R-only accounts non-empty share over time (§8)",
+    fig = _base_fig("R-only accounts non-empty share over time (§6.2)",
                     "% of R-only accounts")
     _add_window_traces(fig, df, lambda s:
                        100 * s.res_nonempty_accounts / s.res_total_r.where(s.res_total_r != 0),

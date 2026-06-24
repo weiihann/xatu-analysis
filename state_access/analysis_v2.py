@@ -286,9 +286,9 @@ def _plot_concentration(q3: pd.DataFrame, object_type: str, which: Literal["top_
     label = "top 1%" if which == "top_1pct_share" else "top 10%"
     fig.update_layout(
         title=f"Concentration: {label} of {object_type}s capture X% of accesses",
-        xaxis=dict(title="window T (days)", type="category", gridcolor="lightgray"),
+        xaxis=dict(title="window T (days)", type="category", showgrid=False),
         yaxis=dict(title=f"share of accesses ({label} of objects)", ticksuffix="%",
-                   gridcolor="lightgray", range=[0, 100]),
+                   showgrid=False, range=[0, 100]),
         template="plotly_white", width=1100, height=580,
         legend=dict(x=0.99, y=0.02, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
     )
