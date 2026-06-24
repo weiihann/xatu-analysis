@@ -373,7 +373,7 @@ For each window, classify every update event as warm or cold:
   count as warming.
 
 So an object's first in-window create-or-update may be cold, and every later update on it is
-warm. For slots an update is a `x→y` SSTORE and a create is `0→x`; for accounts an update is
+warm. For slots an update is a `x→y` SSTORE and a create is `0→x`. For accounts an update is
 a balance or nonce `x→y` and a create is `0→x`. The exact per-object rule is in Appendix A.
 
 #### Coverage
