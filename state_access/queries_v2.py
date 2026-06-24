@@ -460,6 +460,67 @@ FROM per_slot
 """
 
 
+def account_update_coverage(bn_now: int, days: int) -> str:
+    """Per-window warm/cold split of account update events, the account analog of
+    `slot_update_coverage`.
+
+    An account write is a **create** (balance `0→x` or nonce `0→x`), an **update** (balance
+    `x→y` or nonce `x→y`), or a **drain** (`x→0`, neither). The account is treated as one
+    key, so any earlier in-window create-or-update warms a later update. As with slots: if
+    the account's first create-or-update in window is an update, that first update is cold
+    and the rest warm; if it's a create, the create primed the account so every update is
+    warm. `canonical_execution_contracts` is dropped (it has no `transaction_index`): every
+    contract creation also emits a nonce `0→1` diff on the same address (EIP-161), so the
+    create is already captured via `nonce_diffs`. Same simplification as `account_first_op`.
+
+    `event_order` packs `(block, transaction_index, op_priority)` with create < update so a
+    create and an update on the same account in the same transaction resolve to the create
+    first. `internal_index` is per-table and not comparable across balance/nonce diffs, so it
+    is not used. Balance/nonce values are UInt256/UInt64 compared only against 0.
+
+    Returns one row: `(total_updates, warm_updates, cold_updates, pct_warm)`.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    # op_priority: create=0 (sorts first), update=1, drain/other=2 (excluded from argMinIf).
+    order = ("toUInt64(block_number) * 10000000 + toUInt64(transaction_index) * 10 "
+             "+ if(from_value = 0 AND to_value != 0, 0, "
+             "if(from_value != 0 AND to_value != 0, 1, 2))")
+    return f"""
+WITH acct_events AS (
+    SELECT
+        cityHash64(lower(address)) AS h,
+        {order} AS event_order,
+        toUInt8(from_value != 0 AND to_value != 0) AS is_update,
+        toUInt8(from_value =  0 AND to_value != 0) AS is_create
+    FROM canonical_execution_balance_diffs
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(lower(address)),
+        {order},
+        toUInt8(from_value != 0 AND to_value != 0),
+        toUInt8(from_value =  0 AND to_value != 0)
+    FROM canonical_execution_nonce_diffs
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+per_acct AS (
+    SELECT
+        h,
+        countIf(is_update) AS n_update,
+        argMinIf(is_update, event_order, is_create OR is_update) AS first_cu_is_update
+    FROM acct_events
+    GROUP BY h
+    HAVING n_update > 0
+)
+SELECT
+    sum(n_update) AS total_updates,
+    sum(n_update - toUInt64(first_cu_is_update)) AS warm_updates,
+    sum(toUInt64(first_cu_is_update)) AS cold_updates,
+    round(100.0 * warm_updates / total_updates, 4) AS pct_warm
+FROM per_acct
+"""
+
+
 def slot_creation_reads(bn_now: int, days: int) -> str:
     """Created slots split by whether their value is read back in a *different* transaction.
 
