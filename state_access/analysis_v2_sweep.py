@@ -21,8 +21,6 @@ from plotly.subplots import make_subplots
 from state_access.config_v2 import ANCHOR_BLOCK_V2, DATA_DIR_V2, SWEEP_WINDOWS
 from state_access.history_config import FORKS, block_to_date
 
-WINDOW_COLORS = {30: "#1976D2", 90: "#FB8C00", 180: "#388E3C", 365: "#8E24AA"}
-
 # Every time-series chart shares this left bound so the panels line up. The 365d window
 # has no anchors before late 2023, so its panel carries a blank lead-in rather than its
 # own narrower axis.
@@ -130,34 +128,6 @@ def verify_against_snapshot(df: pd.DataFrame) -> None:
             f"{int(row.upd_total_updates):,} vs {int(ref.total_updates):,}"
 
 
-def _base_fig(title: str, ytitle: str) -> go.Figure:
-    fig = go.Figure()
-    fig.update_layout(
-        title=title,
-        xaxis=dict(title="anchor date", showgrid=False),
-        yaxis=dict(title=ytitle, ticksuffix="%", showgrid=False,
-                   rangemode="tozero"),
-        template="plotly_white", width=1100, height=560,
-        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
-    )
-    for name, block in FORKS.items():
-        when = block_to_date(block).strftime("%Y-%m-%d")
-        fig.add_vline(x=when, line_dash="dot", line_color="#9E9E9E")
-        fig.add_annotation(x=when, y=1.0, yref="paper", text=name, showarrow=False,
-                           font=dict(size=10, color="#757575"), yanchor="bottom")
-    return fig
-
-
-def _add_window_traces(fig: go.Figure, df: pd.DataFrame, value_fn, label: str,
-                       dash: str = "solid") -> None:
-    for t in sorted(df["window_days"].unique()):
-        sub = df[df.window_days == t]
-        fig.add_trace(go.Scatter(
-            x=sub["date"], y=value_fn(sub), name=f"{label} T={t}d",
-            mode="lines", line=dict(color=WINDOW_COLORS[int(t)], width=2, dash=dash),
-        ))
-
-
 def verify_composition(df: pd.DataFrame) -> None:
     """Each cell's class shares must partition the access set exactly."""
     for _, r in df.iterrows():
@@ -243,20 +213,20 @@ def _warmth_metric_fig(df: pd.DataFrame, metric: str, title: str) -> go.Figure:
     return fig
 
 
-def _concentration_over_time_fig(df: pd.DataFrame) -> go.Figure:
-    """4-panel (one per window) top-1% read concentration over time, slots vs accounts."""
+def _panels_over_time(df: pd.DataFrame, series: list, title: str,
+                      tozero: bool = True) -> go.Figure:
+    """4-panel (one per window) over-time chart. Each series is (label, color, value_fn),
+    where value_fn(sub) returns the y-values (in %) for a window's rows."""
     windows = sorted(df["window_days"].unique())
     fig = make_subplots(
         rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
         vertical_spacing=0.16, horizontal_spacing=0.07)
-    series = (("slots", "#1976D2", "conc_slot_top1_R"),
-              ("accounts", "#FB8C00", "conc_acct_top1_R"))
     for i, t in enumerate(windows):
         row, col = i // 2 + 1, i % 2 + 1
         sub = df[df.window_days == t].sort_values("date")
-        for label, color, colname in series:
+        for label, color, value_fn in series:
             fig.add_trace(go.Scatter(
-                x=sub["date"], y=100 * sub[colname], name=label, legendgroup=label,
+                x=sub["date"], y=value_fn(sub), name=label, legendgroup=label,
                 showlegend=(i == 0), mode="lines", line=dict(color=color, width=2)),
                 row=row, col=col)
     for name, block in FORKS.items():
@@ -267,44 +237,11 @@ def _concentration_over_time_fig(df: pd.DataFrame) -> go.Figure:
                 fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=row,
                                    col=col, showarrow=False, yanchor="bottom", yshift=3,
                                    font=dict(size=8, color="#757575"))
-    fig.update_yaxes(ticksuffix="%", rangemode="tozero", showgrid=False)
+    fig.update_yaxes(ticksuffix="%", rangemode="tozero" if tozero else "normal",
+                     showgrid=False)
     fig.update_xaxes(showgrid=False)
     fig.update_layout(
-        title="Top-1% share of read accesses over time — by window",
-        template="plotly_white", width=1200, height=860,
-        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
-    return fig
-
-
-def _coverage_over_time_fig(df: pd.DataFrame) -> go.Figure:
-    """4-panel (one per window) warm-update coverage over time, slots vs accounts."""
-    windows = sorted(df["window_days"].unique())
-    fig = make_subplots(
-        rows=2, cols=2, subplot_titles=[f"T = {t}d" for t in windows],
-        vertical_spacing=0.16, horizontal_spacing=0.07)
-    series = (("slots", "#1976D2", "upd_pct_warm"),
-              ("accounts", "#FB8C00", "acct_upd_pct_warm"))
-    for i, t in enumerate(windows):
-        row, col = i // 2 + 1, i % 2 + 1
-        sub = df[df.window_days == t].sort_values("date")
-        for label, color, colname in series:
-            fig.add_trace(go.Scatter(
-                x=sub["date"], y=sub[colname], name=label, legendgroup=label,
-                showlegend=(i == 0), mode="lines", line=dict(color=color, width=2)),
-                row=row, col=col)
-    for name, block in FORKS.items():
-        x = block_to_date(block).strftime("%Y-%m-%d")
-        fig.add_vline(x=x, line_dash="dot", line_color="#9E9E9E", row="all", col="all")
-        for row in (1, 2):
-            for col in (1, 2):
-                fig.add_annotation(x=x, y=1.0, yref="y domain", text=name, row=row,
-                                   col=col, showarrow=False, yanchor="bottom", yshift=3,
-                                   font=dict(size=8, color="#757575"))
-    fig.update_yaxes(ticksuffix="%", showgrid=False)
-    fig.update_xaxes(showgrid=False)
-    fig.update_layout(
-        title="Warm-update coverage over time — slots vs accounts, by window",
-        template="plotly_white", width=1200, height=860,
+        title=title, template="plotly_white", width=1200, height=860,
         legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"))
     return fig
 
@@ -325,25 +262,29 @@ def render_all(df: pd.DataFrame) -> None:
         df, READ_CLASSES, "slot_R",
         "Slot read composition over time — % of |R|, by window")))
 
-    charts.append(("sweep_concentration.png", _concentration_over_time_fig(df)))
+    charts.append(("sweep_concentration.png", _panels_over_time(
+        df, [("slots", "#1976D2", lambda s: 100 * s.conc_slot_top1_R),
+             ("accounts", "#FB8C00", lambda s: 100 * s.conc_acct_top1_R)],
+        "Top-1% share of read accesses over time — by window")))
 
-    charts.append(("sweep_update_coverage.png", _coverage_over_time_fig(df)))
+    charts.append(("sweep_update_coverage.png", _panels_over_time(
+        df, [("slots", "#1976D2", lambda s: s.upd_pct_warm),
+             ("accounts", "#FB8C00", lambda s: s.acct_upd_pct_warm)],
+        "Warm-update coverage over time — slots vs accounts, by window",
+        tozero=False)))
 
-    fig = _base_fig("First-op = nonzero read over time (§6.2)",
-                    "% of R∪W objects")
-    _add_window_traces(fig, df, lambda s:
-                       100 * s.sfo_first_is_nonzero_read / s.sfo_total_slots, "slots")
-    _add_window_traces(fig, df, lambda s:
-                       100 * s.afo_first_is_nonzero_read / s.afo_total_accounts,
-                       "accounts", dash="dash")
-    charts.append(("sweep_first_op.png", fig))
+    charts.append(("sweep_first_op.png", _panels_over_time(
+        df, [("slots", "#1976D2",
+              lambda s: 100 * s.sfo_first_is_nonzero_read / s.sfo_total_slots),
+             ("accounts", "#FB8C00",
+              lambda s: 100 * s.afo_first_is_nonzero_read / s.afo_total_accounts)],
+        "First-op = nonzero read over time — % of R∪W objects, by window")))
 
-    fig = _base_fig("R-only accounts non-empty share over time (§6.2)",
-                    "% of R-only accounts")
-    _add_window_traces(fig, df, lambda s:
-                       100 * s.res_nonempty_accounts / s.res_total_r.where(s.res_total_r != 0),
-                       "non-empty")
-    charts.append(("sweep_empty_split.png", fig))
+    charts.append(("sweep_empty_split.png", _panels_over_time(
+        df, [("non-empty", "#FB8C00",
+              lambda s: 100 * s.res_nonempty_accounts / s.res_total_r.where(s.res_total_r != 0))],
+        "R-only accounts non-empty share over time — % of R-only accounts, by window",
+        tozero=False)))
 
     x_end = df["date"].max().strftime("%Y-%m-%d")
     for name, fig in charts:

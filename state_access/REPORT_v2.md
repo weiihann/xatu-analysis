@@ -425,55 +425,48 @@ index)`. When a read and a write share a transaction the true order is unknown, 
 break **writes > nonzero reads > zero reads**. That under-counts the bad-UX set (a read
 that truly preceded a write is scored as a write), which is the safe direction.
 
+All three tables below are the mean over the weekly post-Merge sweep, one value per window.
+
 #### Slots: first-operation classification
 
-For each T, the share of slots in R∪W by what their first event is:
+The share of slots in R∪W by what their first event is:
 
 | T (days) | first = write | first = zero read | first = nonzero read |
 |---:|---:|---:|---:|
-| 1   | 58.26% | 27.97% | **13.77%** |
-| 7   | 62.74% | 28.97% |  8.29% |
-| 14  | 67.56% | 25.66% |  6.78% |
-| 30  | 68.54% | 25.91% |  5.56% |
-| 60  | 69.72% | 26.33% |  3.94% |
-| 90  | 69.42% | 27.02% |  3.56% |
-| 180 | 71.05% | 26.22% |  2.73% |
-| 365 | 69.31% | 28.42% |  2.27% |
+| 30  | 67.90% | 26.32% | **5.77%** |
+| 90  | 69.34% | 26.57% | 4.09% |
+| 180 | 69.86% | 26.93% | 3.21% |
+| 365 | 70.28% | 27.37% | 2.35% |
 
-![Slot first-op classification](data/v2/slot_first_op.png)
-
-At T=30d, **5.56% of slots in R∪W** (≈3.6M) would be hit by the read-side bump, their first
-event a populated SLOAD. This falls to **2.27% at T=365d**, because a wider window is more
-likely to contain an earlier write. The 26–28% zero-read band is policy-irrelevant here,
-just structural probes on slots that do not exist yet (§4.2).
+At T=30d, **5.8% of slots in R∪W** would be hit by the read-side bump, their first event a
+populated SLOAD. This falls to **2.4% at T=365d**, because a wider window is more likely to
+contain an earlier write. The ~26–27% zero-read band is policy-irrelevant here, just
+structural probes on slots that do not exist yet (§4.2).
 
 #### Accounts: first-operation classification
 
-For each T, the share of accounts in R∪W by what their first event is:
+The share of accounts in R∪W by what their first event is:
 
 | T (days) | first = write | first = nonzero read | first = zero read |
 |---:|---:|---:|---:|
-| 1   | 83.84% | **15.75%** |  0.41% |
-| 7   | 87.36% | 11.98% |  0.67% |
-| 14  | 86.79% | 12.51% |  0.71% |
-| 30  | 88.96% | 10.36% |  0.68% |
-| 60  | 90.78% |  8.48% |  0.75% |
-| 90  | 92.24% |  7.07% |  0.69% |
-| 180 | 92.52% |  6.76% |  0.71% |
-| 365 | 92.12% |  6.30% |  1.57% |
+| 30  | 89.65% | **9.44%** | 0.91% |
+| 90  | 89.67% | 9.29% | 1.04% |
+| 180 | 89.96% | 8.89% | 1.14% |
+| 365 | 90.91% | 7.90% | 1.19% |
 
 (First = appearance read is identically 0. An appearance always loses the same-transaction
 tie-break to a balance or nonce read, because the transaction that emits an appearance also
 emits those reads.)
 
-![Account first-op classification](data/v2/account_first_op.png)
+The bad-UX set is ~9% of warm accounts at T=30d, easing to ~8% at T=365d. The zero-read band
+stays small throughout (~1%). Most of the nonzero-read-first accounts are view-call targets:
+popular contracts checked read-only before a transaction decides whether to interact.
 
-The bad-UX set is most pronounced for accounts at small T: **15.75% of warm accounts at
-T=1d** have a nonzero balance or nonce read as their first event. It declines as the window
-widens, to ~6% by T=365d, since a wider window is more likely to contain an earlier write.
-The zero-read band stays small throughout (under ~1.6%). Most of the nonzero-read-first
-accounts are view-call targets: popular contracts checked read-only before a transaction
-decides whether to interact.
+![First-op = nonzero read over time](data/v2/sweep_first_op.png)
+
+Over the timeline the bad-UX set stays a minority, rising gently as the read-only set fills
+with populated accounts, with short-window excursions toward ~20% in early 2023 and 2025. It
+never inverts the write-first majority.
 
 #### R-only accounts: empty vs non-empty
 
@@ -484,23 +477,23 @@ label it once:
 - **non-empty**: some read returned a positive balance or nonce.
 - **unknown**: seen only as an appearance, with no balance or nonce read to judge.
 
-| T (days) | R-only total | empty | non-empty | unknown |
+| T (days) | mean R-only total | empty | non-empty | unknown |
 |---:|---:|---:|---:|---:|
-| 1   |    135,922 | 1.79% | **98.21%** | 0 |
-| 7   |    586,826 | 3.71% | **96.29%** | 0 |
-| 14  |  1,065,388 | 3.66% | 96.34% | 0 |
-| 30  |  1,752,187 | 4.24% | 95.76% | 0 |
-| 60  |  2,619,858 | 5.68% | 94.32% | 0 |
-| 90  |  3,327,941 | 5.98% | 94.02% | 0 |
-| 180 |  5,654,666 | 5.87% | 94.13% | 10 |
-| 365 |  8,482,264 | 7.79% | **92.21%** | 11 |
+| 30  |   919,635 | 5.56% | **94.44%** | 1 |
+| 90  | 2,218,202 | 6.43% | 93.57% | 2 |
+| 180 | 3,805,007 | 7.15% | 92.85% | 2 |
+| 365 | 6,100,246 | 8.92% | **91.08%** | 2 |
 
-**Almost every R account is non-empty**, 92–98% across all windows, drifting only slightly
-toward empty as T grows (7.8% at T=365d). So under read-side bumping, virtually every R
-account read would bump a real period, turning a read into a write from the user's side.
-The empty-account free pass is tiny. Unknown is negligible, 11 accounts or fewer at any T.
-Even setting aside first-event reads, the pure R slice (where any read bumps a period) is
-dominated by non-empty objects.
+**Almost every R account is non-empty**, 91–94% across windows, drifting only slightly toward
+empty as T grows. So under read-side bumping, virtually every R account read would bump a
+real period, turning a read into a write from the user's side. The empty-account free pass is
+tiny, and unknown is negligible (a handful of accounts at any T). Even setting aside
+first-event reads, the pure R slice is dominated by non-empty objects.
+
+![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
+
+Over the timeline the non-empty share grew, from the high-50s/70s in 2023 (lower at the wider
+windows) to ~91–96% by 2026, so the empty-account free pass was always small and has shrunk.
 
 > Caveat: the confirmed-empty count (both balance and nonce read as zero) is ~0 at every T.
 > The "empty" bucket is almost entirely call or transfer recipients whose balance was read
@@ -508,20 +501,6 @@ dominated by non-empty objects.
 > a write). So "empty" really means "zero-value call target, existence unconfirmed", and
 > the bias is conservative: a dormant nonce>0 account misclassified here would be
 > non-empty, pushing the policy-bad share up.
-
-#### Stability over time
-
-![First-op = nonzero read over time](data/v2/sweep_first_op.png)
-![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
-
-**The first-op bad-UX set stays a minority**, mostly under ~10% of warm accounts, with
-short-window peaks near 20% in early 2023 and again in 2025. It rises over the timeline at
-every window, from ~1–4% in 2022–2023 to ~6–10% by 2026, as the read-only set fills with
-populated accounts. Still a minority, but a growing one.
-
-**R accounts grew more non-empty over time**, from ~56–79% in 2023 (lower at the wider
-windows) to ~92–96% in 2026. The empty-account free pass was always small and has shrunk
-further.
 
 The descriptive structure drifts slowly with chain age. The policy conclusions are
 effectively time-invariant: a tiering scheme tuned on today's anchor would behave the same
@@ -921,10 +900,10 @@ state_access/data/v2/
   q1_warmth_{slot,account,combined}.png
   q1_warmth_slot_{W,R}_typed.png                     # typed slot stacked areas
   q1_warmth_slot_mixed_decomp.png                    # W_mixed 6-way decomposition
-  slot_update_coverage.png                           # §6.1 warm/cold update line chart
-  slot_first_op.png                                  # §6.2 slot first-op stacked bar
-  account_first_op.png                               # §6.2 account first-op stacked bar
-  account_r_empty_split.png                          # §6.2 R-only empty vs non-empty
+  slot_update_coverage.png                           # latest-anchor warm/cold update (not embedded; §6.1 uses the over-time view)
+  slot_first_op.png                                  # latest-anchor slot first-op (not embedded; §6.2 uses the over-time view)
+  account_first_op.png                               # latest-anchor account first-op (not embedded; §6.2 uses the over-time view)
+  account_r_empty_split.png                          # latest-anchor R-only empty/non-empty (not embedded; §6.2 uses the over-time view)
   q3_concentration_top1_{slot,account}.png
   history_event_totals.parquet                       # full-history per-chunk event counts
   history_event_totals_summary.parquet               # per-(kind, metric) totals + era split
