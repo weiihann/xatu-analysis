@@ -280,12 +280,6 @@ def render_all(df: pd.DataFrame) -> None:
               lambda s: 100 * s.afo_first_is_nonzero_read / s.afo_total_accounts)],
         "First-op = nonzero read over time — % of R∪W objects, by window")))
 
-    charts.append(("sweep_empty_split.png", _panels_over_time(
-        df, [("non-empty", "#FB8C00",
-              lambda s: 100 * s.res_nonempty_accounts / s.res_total_r.where(s.res_total_r != 0))],
-        "R-only accounts non-empty share over time — % of R-only accounts, by window",
-        tozero=False)))
-
     x_end = df["date"].max().strftime("%Y-%m-%d")
     for name, fig in charts:
         fig.update_xaxes(range=[X_AXIS_START, x_end])

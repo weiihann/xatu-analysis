@@ -769,57 +769,6 @@ FROM (SELECT h, argMin(op, event_order) AS op FROM all_events GROUP BY h);
 
 Full SQL in `state_access/queries_v2.py` (`slot_first_op`, `account_first_op`).
 
-### R-only empty/non-empty split (§6.2)
-
-Single GROUP BY, no JOINs. Each source row is tagged with `UInt8` flags, and we aggregate
-`max(balance != 0)` rather than `max(balance)` so the per-group state is a byte, not a
-`UInt256`. That is what lets it run at T=365d (a triple-CTE plus double-LEFT-JOIN form
-stalls the cluster).
-
-```sql
-WITH per_acct AS (
-    SELECT
-        h,
-        max(is_write)     AS any_write,
-        max(bal_nonzero)  AS bal_nonzero,
-        max(non_nonzero)  AS non_nonzero,
-        max(has_bal_read) AS has_bal_read,
-        max(has_non_read) AS has_non_read
-    FROM (
-        -- writes (is_write=1): balance_diffs, nonce_diffs, contracts(contract_address)
-        SELECT cityHash64(address) AS h, toUInt8(1) AS is_write,
-               toUInt8(0) AS bal_nonzero, toUInt8(0) AS non_nonzero,
-               toUInt8(0) AS has_bal_read, toUInt8(0) AS has_non_read
-        FROM canonical_execution_balance_diffs WHERE in_window
-        UNION ALL ... -- nonce_diffs, contracts: same write pattern
-        -- value reads: balance_reads sets bal_nonzero/has_bal_read, nonce_reads similarly
-        UNION ALL
-        SELECT cityHash64(address), toUInt8(0),
-               toUInt8(balance != 0), toUInt8(0), toUInt8(1), toUInt8(0)
-        FROM canonical_execution_balance_reads WHERE in_window
-        UNION ALL ... -- nonce_reads: toUInt8(nonce != 0) into non_nonzero, has_non_read=1
-        -- value-less reads: address_appearances (all flags 0 except it's a read presence)
-        UNION ALL
-        SELECT cityHash64(address), toUInt8(0),
-               toUInt8(0), toUInt8(0), toUInt8(0), toUInt8(0)
-        FROM canonical_execution_address_appearances
-        WHERE in_window AND relationship IN (...)
-    )
-    GROUP BY h
-)
-SELECT
-    countIf(any_write = 0) AS total_r,
-    countIf(any_write = 0 AND bal_nonzero = 0 AND non_nonzero = 0
-            AND (has_bal_read = 1 OR has_non_read = 1)) AS empty_accounts,
-    countIf(any_write = 0 AND (bal_nonzero = 1 OR non_nonzero = 1)) AS nonempty_accounts,
-    countIf(any_write = 0 AND has_bal_read = 0 AND has_non_read = 0) AS unknown_accounts
-FROM per_acct;
-```
-
-`contracts` is kept in the write set here (unlike `account_first_op`): ~1% of
-contract-creation accounts lack a `nonce_diff`/`balance_diff` in window, and dropping
-contracts would wrongly admit those written accounts into R.
-
 ### Full-history event totals (§4.1/§4.2 history subsections)
 
 Eight builders in `queries_v2.py` (`slot_write_event_totals`, `slot_read_event_totals`,
@@ -854,7 +803,6 @@ state_access/data/v2/
   slot_update_coverage.parquet   # per-T warm/cold update split for §6.1
   slot_first_op.parquet          # §6.2 first-op classification (slots)
   account_first_op.parquet       # §6.2 first-op classification (accounts)
-  account_r_empty_split.parquet  # §6.2 empty/non-empty R-only accounts
   q1_warmth_{slot,account,combined}.parquet         # set sizes + pct of live state
   q1_warmth_slot_typed.parquet                       # typed slot W/R breakdown
   q1_warmth_slot_mixed_decomp.parquet                # W_mixed sub-categories
@@ -865,7 +813,6 @@ state_access/data/v2/
   slot_update_coverage.png                           # latest-anchor warm/cold update (not embedded; §6.1 uses the over-time view)
   slot_first_op.png                                  # latest-anchor slot first-op (not embedded; §6.2 uses the over-time view)
   account_first_op.png                               # latest-anchor account first-op (not embedded; §6.2 uses the over-time view)
-  account_r_empty_split.png                          # latest-anchor R-only empty/non-empty (not embedded; §6.2 uses the over-time view)
   q3_concentration_top1_{slot,account}.png
   history_event_totals.parquet                       # full-history per-chunk event counts
   history_event_totals_summary.parquet               # per-(kind, metric) totals + era split
@@ -876,7 +823,7 @@ state_access/data/v2/
   sweep_write_composition.png                        # §4.1 write lifecycle composition over time
   sweep_read_composition.png                         # §4.2 read composition over time
   sweep_concentration.png                            # §5.2 concentration over time
-  sweep_update_coverage.png  sweep_first_op.png  sweep_empty_split.png  # §6 policy over time
+  sweep_update_coverage.png  sweep_first_op.png  # §6 policy over time
 ```
 
 ### Historical sweep: the over-time views

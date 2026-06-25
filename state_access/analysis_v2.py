@@ -542,41 +542,6 @@ def run_account_first_op() -> None:
     _show(fig)
 
 
-def run_account_r_empty_split() -> None:
-    """Plot the per-W empty vs non-empty split of R-only accounts (§4d)."""
-    p = DATA_DIR_V2 / "account_r_empty_split.parquet"
-    if not p.exists():
-        print(f"  no account_r_empty_split parquet at {p}; sweep first")
-        return
-    df = pd.read_parquet(p).sort_values("window_days").reset_index(drop=True)
-    df["pct_empty"]    = 100 * df["empty_accounts"]    / df["total_r"]
-    df["pct_nonempty"] = 100 * df["nonempty_accounts"] / df["total_r"]
-    df["pct_unknown"]  = 100 * df["unknown_accounts"]  / df["total_r"]
-    print(f"\n>>> account_r_empty_split: {len(df)} windows")
-
-    x_cat = [str(w) for w in df["window_days"]]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=x_cat, y=df["pct_nonempty"], name="non-empty (balance>0 or nonce>0)",
-                         marker=dict(color="#C2185B")))
-    fig.add_trace(go.Bar(x=x_cat, y=df["pct_empty"], name="empty (balance=0 and nonce=0)",
-                         marker=dict(color="#90CAF9")))
-    fig.add_trace(go.Bar(x=x_cat, y=df["pct_unknown"], name="unknown (no balance/nonce reads)",
-                         marker=dict(color="#9E9E9E")))
-    fig.update_layout(
-        barmode="stack",
-        title="R-only accounts — empty vs non-empty"
-              "<br><sub>R-only accounts have no writes in window, so balance and nonce are "
-              "stable; empty = both observed as 0</sub>",
-        xaxis=dict(title="window T (days)", type="category"),
-        yaxis=dict(title="% of R-only accounts", ticksuffix="%", range=[0, 100],
-                   gridcolor="lightgray"),
-        template="plotly_white", width=1100, height=560,
-        legend=dict(x=0.99, y=0.5, xanchor="right", bgcolor="rgba(255,255,255,0.85)"),
-    )
-    fig.write_image(DATA_DIR_V2 / "account_r_empty_split.png", scale=2)
-    _show(fig)
-
-
 def run_slot_update_coverage() -> None:
     """Plot the per-W warm/cold update split persisted by `collect_v2` (or the smoke run)."""
     p = DATA_DIR_V2 / "slot_update_coverage.parquet"
@@ -860,7 +825,6 @@ def main() -> None:
     run_slot_update_coverage()
     run_slot_first_op()
     run_account_first_op()
-    run_account_r_empty_split()
     run_history_event_totals(totals)
     print(f"\nDone. Charts + Q-parquets under {DATA_DIR_V2}")
 
