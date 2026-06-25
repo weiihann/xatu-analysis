@@ -390,16 +390,11 @@ Each value is the mean % of update events warm over the weekly post-Merge sweep.
 ![Warm-update coverage over time, slots vs accounts](data/v2/sweep_update_coverage.png)
 
 **The Active tier covers update gas well.** ~94% of slot update SSTOREs at T=30d keep the
-cheap Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of slot updates. A
-naive check against a static past-window set undercounts this by ~9pp, judging a slot
-re-written in the window cold every time and missing intra-window promotion.
+cheap Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of slot updates.
 
 **Accounts churn hotter than slots.** Account update coverage runs ~2–3pp above slots at
 every window (97.0% vs 94.1% at T=30d, 99.0% vs 97.7% at T=365d), on ~50% more update volume
-(1.5B vs 1.0B mean updates at T=365d). Balance and nonce writes land on a recently-written
-active set even more than slot SSTOREs do, so tiering would cover account update gas even
-better. The gas link is looser for accounts, though: balance and nonce changes are side
-effects of transfers and calls, not separately repriced opcodes like SSTORE.
+(1.5B vs 1.0B mean updates at T=365d).
 
 **The benefit saturates fast.** Slot coverage climbs from ~94% at T=30d to ~98% at T=365d,
 only +4pp for a 12× window, and accounts are flatter still (~97% to ~99%). Stretching past
@@ -411,11 +406,8 @@ at no fork, so the headline numbers are representative, not a lucky anchor. Cold
 first-touch awakenings of dormant state, ~23M slots at T=365d reactivated after a year.
 
 ### 6.2 Read-side period bump
-
-A third question is about the **first operation per object** in a window:
-
-> Under a hypothetical extension where the first read of an inactive object also bumps its
-> period, making reads write-like for users, which objects pay that cost?
+Under a hypothetical extension where the first read of an inactive object also bumps its
+period, making reads write-like for users, which objects pay that cost?
 
 The bad-UX set is **objects whose first in-window event is a nonzero read**. For a slot
 that is an SLOAD returning a populated value, for an account a balance or nonce read
