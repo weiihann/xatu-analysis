@@ -425,7 +425,7 @@ index)`. When a read and a write share a transaction the true order is unknown, 
 break **writes > nonzero reads > zero reads**. That under-counts the bad-UX set (a read
 that truly preceded a write is scored as a write), which is the safe direction.
 
-All three tables below are the mean over the weekly post-Merge sweep, one value per window.
+Both tables below are the mean over the weekly post-Merge sweep, one value per window.
 
 #### Slots: first-operation classification
 
@@ -447,13 +447,12 @@ structural probes on slots that do not exist yet (§4.2).
 
 The share of accounts in R∪W by what their first event is:
 
-TODO: swap the position of nonzero and zero read column
-| T (days) | first = write | first = nonzero read | first = zero read |
+| T (days) | first = write | first = zero read | first = nonzero read |
 |---:|---:|---:|---:|
-| 30  | 89.65% | **9.44%** | 0.91% |
-| 90  | 89.67% | 9.29% | 1.04% |
-| 180 | 89.96% | 8.89% | 1.14% |
-| 365 | 90.91% | 7.90% | 1.19% |
+| 30  | 89.65% | 0.91% | **9.44%** |
+| 90  | 89.67% | 1.04% | 9.29% |
+| 180 | 89.96% | 1.14% | 8.89% |
+| 365 | 90.91% | 1.19% | 7.90% |
 
 (First = appearance read is identically 0. An appearance always loses the same-transaction
 tie-break to a balance or nonce read, because the transaction that emits an appearance also
