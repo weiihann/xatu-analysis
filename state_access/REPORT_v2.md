@@ -447,6 +447,7 @@ structural probes on slots that do not exist yet (§4.2).
 
 The share of accounts in R∪W by what their first event is:
 
+TODO: swap the position of nonzero and zero read column
 | T (days) | first = write | first = nonzero read | first = zero read |
 |---:|---:|---:|---:|
 | 30  | 89.65% | **9.44%** | 0.91% |
@@ -467,44 +468,6 @@ popular contracts checked read-only before a transaction decides whether to inte
 Over the timeline the bad-UX set stays a minority, rising gently as the read-only set fills
 with populated accounts, with short-window excursions toward ~20% in early 2023 and 2025. It
 never inverts the write-first majority.
-
-#### R-only accounts: empty vs non-empty
-
-An R account is never written in the window, so its balance and nonce are stable and we can
-label it once:
-
-- **empty**: every observed balance and nonce read returned zero.
-- **non-empty**: some read returned a positive balance or nonce.
-- **unknown**: seen only as an appearance, with no balance or nonce read to judge.
-
-| T (days) | mean R-only total | empty | non-empty | unknown |
-|---:|---:|---:|---:|---:|
-| 30  |   919,635 | 5.56% | **94.44%** | 1 |
-| 90  | 2,218,202 | 6.43% | 93.57% | 2 |
-| 180 | 3,805,007 | 7.15% | 92.85% | 2 |
-| 365 | 6,100,246 | 8.92% | **91.08%** | 2 |
-
-**Almost every R account is non-empty**, 91–94% across windows, drifting only slightly toward
-empty as T grows. So under read-side bumping, virtually every R account read would bump a
-real period, turning a read into a write from the user's side. The empty-account free pass is
-tiny, and unknown is negligible (a handful of accounts at any T). Even setting aside
-first-event reads, the pure R slice is dominated by non-empty objects.
-
-![R-only accounts non-empty share over time](data/v2/sweep_empty_split.png)
-
-Over the timeline the non-empty share grew, from the high-50s/70s in 2023 (lower at the wider
-windows) to ~91–96% by 2026, so the empty-account free pass was always small and has shrunk.
-
-> Caveat: the confirmed-empty count (both balance and nonce read as zero) is ~0 at every T.
-> The "empty" bucket is almost entirely call or transfer recipients whose balance was read
-> as zero but whose nonce was never read (only the sender's nonce is consulted, and that is
-> a write). So "empty" really means "zero-value call target, existence unconfirmed", and
-> the bias is conservative: a dormant nonce>0 account misclassified here would be
-> non-empty, pushing the policy-bad share up.
-
-The descriptive structure drifts slowly with chain age. The policy conclusions are
-effectively time-invariant: a tiering scheme tuned on today's anchor would behave the same
-at any post-Merge anchor.
 
 ## 7. What this opens up
 
