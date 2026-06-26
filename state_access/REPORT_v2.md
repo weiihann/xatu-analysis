@@ -360,6 +360,8 @@ Each value is the mean % of update events warm over the weekly post-Merge sweep.
 
 | T (days) | slot % warm | account % warm |
 |---:|---:|---:|
+| 1   | 85.2% | 92.0% |
+| 7   | 91.2% | 95.1% |
 | 30  | **94.1%** | **97.0%** |
 | 90  | **95.7%** | **98.0%** |
 | 180 | **96.7%** | **98.6%** |
@@ -369,6 +371,12 @@ Each value is the mean % of update events warm over the weekly post-Merge sweep.
 
 **The Active tier covers update gas well.** ~94% of slot update SSTOREs at T=30d keep the
 cheap Active price, ~96% at T=90d, so the Inactive premium hits only ~3–6% of slot updates.
+Even a 1-day window already covers 85% of slot update gas and 92% of account update gas.
+
+**Slots are more window-sensitive than accounts at the low end.** Cutting the window from
+30d to 1d drops slot coverage from 94% to 85%, but account coverage only from 97% to 92%.
+Account state (hot balances and nonces on routers and exchanges) is re-written many times a
+day, so almost every account update already has a same-day prior write.
 
 **Accounts churn hotter than slots.** Account update coverage runs ~2–3pp above slots at
 every window (97.0% vs 94.1% at T=30d, 99.0% vs 97.7% at T=365d), on ~50% more update volume
