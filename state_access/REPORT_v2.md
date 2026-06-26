@@ -324,6 +324,37 @@ window that moved is the short 30-day one, climbing from ~87% to ~96% as read tr
 consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and
 rose more gently (~78% to ~88% at T=365).
 
+#### Who sits at the top
+
+The ten most-accessed accounts in the T=365d window (block 24,870,000), by access count over
+all sources:
+
+| rank | account | accesses | what it is |
+|---:|---|---:|---|
+| 1  | `0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97` | 1.19B | Titan Builder |
+| 2  | `0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48` | 729M | USDC |
+| 3  | `0xdadb0d80178819f2319190d340ce9a924f783711` | 729M | BuilderNet |
+| 4  | `0xdac17f958d2ee523a2206206994597c13d831ec7` | 615M | USDT |
+| 5  | `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2` | 579M | WETH |
+| 6  | `0x43506849d7c04f9138d1a2050bbf3a0c054402dd` | 428M | contract (call target) |
+| 7  | `0x396343362be2a4da1ce0c1c210945346fb82aa49` | 241M | QuasarBuilder |
+| 8  | `0x000000000004444c5dc75cb358380d2e3de08a90` | 217M | Uniswap V4 PoolManager |
+| 9  | `0x609e0f0cb16e53878ba5e959a22fc7fcd81b124a` | 209M | router / aggregator |
+| 10 | `0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5` | 205M | beaverbuild |
+
+The head splits in two. **Block builders** (Titan, BuilderNet, QuasarBuilder, beaverbuild)
+top the list because post-Merge every transaction credits the block's fee recipient. A
+builder is the fee recipient on every transaction in every block it builds, so a dominant
+builder accumulates one `miner_fee` appearance per transaction across a third of all blocks.
+Their appearances are 95–98% `miner_fee`, and the coinbase balance is also credited each
+block, so this is fee-recipient activity, not contract-call pressure. **The contracts** are
+the genuinely heavily-called accounts: stablecoins (USDC, USDT), WETH, and the Uniswap V4
+singleton, whose appearances are almost all `call_to` / `call_from`.
+
+So the account concentration head is a mix: a few dominant builders pulled up by fee
+crediting, plus the handful of contracts that absorb most call traffic. Excluding the
+`miner_fee` relationship would leave the contracts alone at the top.
+
 ## 6. EIP-8295: a state-tiering counterfactual
 
 The previous sections describe how state accesses and creations look over the course of
