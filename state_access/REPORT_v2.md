@@ -33,7 +33,7 @@ different ways of dealing with state growth, such as separation of dormant state
 
 ## 3. Data and method
 
-`T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and [§5.1](#51-warmth-how-much-state-is-active) and [§6](#6-eip-8295-a-state-tiering-counterfactual) also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are accounts and stoarge slots.
+`T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and [§5.1](#51-warmth-how-much-state-is-active) and [§6](#6-eip-8295-a-state-tiering-counterfactual) also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are accounts and storage slots.
 
 All source tables are extracted from [Xatu](https://github.com/ethpandaops/xatu).
 
@@ -73,7 +73,7 @@ it. So R counts only the explicit reads (such as `SLOAD`) that add something bey
 
 ## 4. What state access and creation looks like
 
-A slot or account can be touched in many ways. This section attemps to explore the patterns of state writes and reads. 
+A slot or account can be touched in many ways. This section attempts to explore the patterns of state writes and reads.
 
 ### 4.1 Write structure
 
@@ -187,7 +187,7 @@ Every read event over all of history.
 The fee recipient is the block proposer credited the transaction's priority fee, not a
 consensus-layer withdrawal (those are not recorded).
 
-As shown, most read events are nonzero for both accounts and slots. Do also note that these includes writes (reads come before writes), but it's X% of the total writes (TODO: calculate).
+As shown, most read events are nonzero for both accounts and slots. These read totals include the reads coupled to writes, since every write is preceded by a read (one `SLOAD` per `SSTORE`). The write-coupled reads equal the write count exactly, so for slots they are ~35% of all read events, leaving ~65% as genuine reads beyond the write set.
 
 #### What reads return
 
@@ -308,7 +308,7 @@ contracts, while slot reads spread across many contracts' storage.
 ![Concentration over time, top-1% share](data/v2/sweep_concentration.png)
 
 Account-read concentration is extreme and has been for the whole sample. The top 1% of R
-**accounts** holds **96–98%** of read accesses at the latest anchor (block ??? TODO fill this), and at the wider windows it was already there in 2022–2023 (T=90 ~93%, T=180 ~95%, T=365 ~97%). The one window that moved is the short 30-day one, climbing from ~87% to ~96% as read traffic consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and rose more gently (~78% to ~88% at T=365).
+**accounts** holds **96–98%** of read accesses at the latest anchor (block 24,870,000), and at the wider windows it was already there in 2022–2023 (T=90 ~93%, T=180 ~95%, T=365 ~97%). The one window that moved is the short 30-day one, climbing from ~87% to ~96% as read traffic consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and rose more gently (~78% to ~88% at T=365).
 
 #### Who sits at the top
 
@@ -413,8 +413,7 @@ wants.
 Under a hypothetical extension where the first read of an inactive object also bumps its
 period, making reads write-like for users, which objects pay that cost?
 
-The bad-UX set is **objects whose first in-window event is a nonzero read**. For example, a slot that is an SLOAD returning a populated value, or an account a balance or nonce read
-returning nonzero. A write or a zero read as the first event costs nothing because writes
+The bad-UX set is **objects whose first in-window event is a nonzero read**. For example, a slot whose first event is an SLOAD returning a populated value, or an account whose first event is a balance or nonce read returning nonzero. A write or a zero read as the first event costs nothing because writes
 already refresh the metadata, and zero reads do not populate the metadata.
 
 EIP-8188 updates the write-age on writes only, never on reads. A scheme that bumped the
@@ -456,7 +455,7 @@ with populated accounts, with short-window excursions toward ~20% in early 2023 
 
 ## Conclusion
 
-State operation is lopsided on both sides. Most slots are created and never touched again, so the write set is state growth more than churn. While Reads are mostly dominated by empty-slot probing.
+State operation is lopsided on both sides. Most slots are created and never touched again, so the write set is state growth more than churn, while reads are mostly empty-slot probing.
 
 For a write-age tiering scheme, only updates are repriceable, so it's roughly a
 quarter of writes or ~5% of state, and a short window covers them well: 94% of slot update
