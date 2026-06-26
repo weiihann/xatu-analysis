@@ -33,9 +33,7 @@ different ways of dealing with state growth, such as separation of dormant state
 
 ## 3. Data and method
 
-The unit of analysis is a trailing time window, with **writes** kept separate from
-**reads**. `T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and [§5.1](#51-warmth-how-much-state-is-active) and [§6](#6-eip-8295-a-state-tiering-counterfactual) also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are **storage slots**
-`(contract, slot)` and **accounts** `(address)`.
+`T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and [§5.1](#51-warmth-how-much-state-is-active) and [§6](#6-eip-8295-a-state-tiering-counterfactual) also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are accounts and stoarge slots.
 
 All source tables are extracted from [Xatu](https://github.com/ethpandaops/xatu).
 
@@ -75,10 +73,7 @@ it. So R counts only the explicit reads (such as `SLOAD`) that add something bey
 
 ## 4. What state access and creation looks like
 
-A slot or account can be touched in many ways. This section asks what those accesses
-actually are: whether a written slot is freshly created or modified in place, whether a
-read returns real data or just checks for existence, and how the mix has held up over the
-chain's history.
+A slot or account can be touched in many ways. This section attemps to explore the patterns of state writes and reads. 
 
 ### 4.1 Write structure
 
@@ -137,8 +132,7 @@ a slot can see a type more than once:
 - **U+D**: updated one or more times, then deleted. Existed before the window.
 - **C+U+D**: created, updated one or more times, and deleted, a full lifecycle.
 
-The table below shows the composition averaged over the post-Merge sweep, weighting each weekly anchor
-equally:
+The table below shows the composition averaged over the post-Merge sweep, weighting each weekly anchor equally:
 
 | T (days) | C | C+U | U | C+U+D | C+D | U+D | D |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -149,7 +143,7 @@ equally:
 
 ![Slot write composition over time](data/v2/sweep_write_composition.png)
 
-**C dominates at every window, ~55% of |W|.** Most slots are initialized in window and
+**Creation dominates at every window, ~55% of |W|.** Most slots are initialized in window and
 never touched again, which is state growth rather than churn. C is also the most volatile
 class. At T=30 it swings between 38% and 68% week to week, dipping through the 2024
 activity surge and recovering after.
@@ -164,7 +158,7 @@ even more growth-driven the further back it reaches.
 
 ### 4.2 Read structure
 
-Reads split by what they return: real data, or zero from an empty-slot probe. As with
+Reads can have two different return values: either zero or nonzero. As with
 writes, two views follow, the all-time totals and the per-window split over time.
 
 #### Read events over the entire chain history
@@ -193,11 +187,11 @@ Every read event over all of history.
 The fee recipient is the block proposer credited the transaction's priority fee, not a
 consensus-layer withdrawal (those are not recorded).
 
+As shown, most read events are nonzero for both accounts and slots. Do also note that these includes writes (reads come before writes), but it's X% of the total writes (TODO: calculate).
+
 #### What reads return
 
-Each read in R returns `zero` (an empty-slot probe, "is this slot set?") or `nonzero` (real
-data). R holds only objects read but not written in the window. As a share of |R|, averaged
-over the weekly post-Merge sweep:
+Each read in R returns `zero` (an empty-slot probe, "is this slot set?") or `nonzero` (populated data). R holds only objects read but not written in the window. As a share of |R|, averaged over the weekly post-Merge sweep:
 
 | T (days) | zero-only | nonzero-only |
 |---:|---:|---:|
@@ -208,15 +202,14 @@ over the weekly post-Merge sweep:
 
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
-**Most of R is empty-slot probes**. Only ~7–18% of R is real state read (e.g. oracle
-parameters, config, immutable-style storage), and that share shrinks as the window widens.
+**Most of R is empty-slot probes**. Only ~7–18% of R is actual populated read, and that share shrinks as the window widens.
 
 This does not contradict the 69.9% nonzero in the all-history table above. They count
-different things. The 69.9% is **per event**: of every `SLOAD` ever, 70% hit a populated
+different things. The 69.9% is **per event**: of every `SLOAD` ever, ~70% hit a populated
 slot, because a small set of hot populated slots is read over and over. The ~7–18% here is
 **per distinct slot** in the read-only set R: most slots that are only read in a window are
-one-shot existence probes, each hit once. Event-weighted, populated reads dominate.
-Object-weighted, empty probes do.
+one-shot existence probes, each hit once. Weighted by read events, populated reads dominate.
+Weighted by objects, empty probes do take up a larger share.
 
 ## 5. Warmth and concentration
 
@@ -261,10 +254,7 @@ populated read set stays a tiny fraction of the write set throughout.
 
 #### Warmth over time
 
-One chart per metric, with a panel per window. Each panel shows slots, accounts, and the
-combined set as a share of its live-state denominator. Combined is the pooled share, a
-denominator-weighted blend of the two, so it sits between the slot and account lines rather
-than above them.
+The following panels show the slots, accounts, and the combined set as a share of its live-state denominator:
 
 ![Warmth over time, write set W](data/v2/sweep_warmth_W.png)
 ![Warmth over time, populated reads R⁺](data/v2/sweep_warmth_Rp.png)
@@ -303,7 +293,7 @@ Accesses are per-(tx, object) events ([§3](#3-data-and-method)).
 
 **R is more concentrated than W everywhere.** At T=365d the top 1% of R slots sees ~88% of
 slot read accesses, and the top 1% of R accounts ~98%. A handful of popular contracts
-absorb almost all the read pressure on accounts.
+absorb almost all the read operations.
 
 **Concentration grows with T.** Wider windows pull in tail keys that get few accesses, so
 the head's relative weight rises. The jump is sharpest from T=1d to T=30d (~18pp for slot R,
@@ -318,11 +308,7 @@ contracts, while slot reads spread across many contracts' storage.
 ![Concentration over time, top-1% share](data/v2/sweep_concentration.png)
 
 Account-read concentration is extreme and has been for the whole sample. The top 1% of R
-**accounts** holds **96–98%** of read accesses at the latest anchor, and at the wider
-windows it was already there in 2022–2023 (T=90 ~93%, T=180 ~95%, T=365 ~97%). The one
-window that moved is the short 30-day one, climbing from ~87% to ~96% as read traffic
-consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and
-rose more gently (~78% to ~88% at T=365).
+**accounts** holds **96–98%** of read accesses at the latest anchor (block ??? TODO fill this), and at the wider windows it was already there in 2022–2023 (T=90 ~93%, T=180 ~95%, T=365 ~97%). The one window that moved is the short 30-day one, climbing from ~87% to ~96% as read traffic consolidated onto a tiny set of heavily-called contracts. Slot concentration is lower and rose more gently (~78% to ~88% at T=365).
 
 #### Who sits at the top
 
@@ -343,17 +329,10 @@ all sources:
 | 10 | `0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5` | 205M | beaverbuild |
 
 The head splits in two. **Block builders** (Titan, BuilderNet, QuasarBuilder, beaverbuild)
-top the list because post-Merge every transaction credits the block's fee recipient. A
-builder is the fee recipient on every transaction in every block it builds, so a dominant
-builder accumulates one `miner_fee` appearance per transaction across a third of all blocks.
-Their appearances are 95–98% `miner_fee`, and the coinbase balance is also credited each
-block, so this is fee-recipient activity, not contract-call pressure. **The contracts** are
-the genuinely heavily-called accounts: stablecoins (USDC, USDT), WETH, and the Uniswap V4
-singleton, whose appearances are almost all `call_to` / `call_from`.
+top the list because post-Merge every transaction credits the block's fee recipient. This is due to the fact that builders are the fee recipient on every transaction in every block it builds. **The contracts** that are genuinely the heavily accessed accounts: stablecoins (USDC, USDT), WETH, and the Uniswap V4 singleton.
 
 So the account concentration head is a mix: a few dominant builders pulled up by fee
-crediting, plus the handful of contracts that absorb most call traffic. Excluding the
-`miner_fee` relationship would leave the contracts alone at the top.
+crediting, plus the handful of contracts that absorb most call traffic.
 
 The slot side has no such artifact, since only contracts have storage. The ten contracts
 whose storage slots are accessed most in the same window:
@@ -371,10 +350,7 @@ whose storage slots are accessed most in the same window:
 | 9  | `0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2` | 45M | Aave V3 Pool |
 | 10 | `0xe0554a476a092703abdb3ef35c80e0d76d32939f` | 44M | Uniswap V3 USDC/ETH pool |
 
-This is the cleaner heavy-hitter view, four kinds of contract. Token balance and allowance
-mappings (USDT, USDC, WETH), DEX (the Uniswap V4 singleton and two busy Uniswap V3 pools),
-lending (Aave V3, Morpho), and the high-churn mint/stake tokens (XEN, HEX). These are the
-contracts whose per-slot storage gets read and written far more than any other.
+Token balance and allowance mappings (USDT, USDC, WETH), DEX (the Uniswap V4 singleton and two busy Uniswap V3 pools), lending (Aave V3, Morpho), and the high-churn mint/stake tokens (XEN, HEX). These are the contracts whose storage gets read and written far more than any other.
 
 ## 6. EIP-8295: a state-tiering counterfactual
 
@@ -388,12 +364,6 @@ recording when each piece of state was last mutated. It changes no gas costs by 
 
 ### 6.1 Warm-update coverage
 
-Set membership alone cannot answer the gas question, which is per event, not per object: of
-the update gas spent in a window, what share would price as Active? A naive check against a
-static past-window set double-counts the cold tier, judging a slot re-written several times
-in the window as cold every time. The measurement below instead promotes a slot the moment
-it is first warmed inside the window, so only its first touch can be cold.
-
 #### Definition
 
 For each window, classify every update event as warm or cold:
@@ -403,8 +373,7 @@ For each window, classify every update event as warm or cold:
   count as warming.
 
 So an object's first in-window create-or-update may be cold, and every later update on it is
-warm. For slots an update is a `x→y` SSTORE and a create is `0→x`. For accounts an update is
-a balance or nonce `x→y` and a create is `0→x`. The exact per-object rule is in Appendix A.
+warm.
 
 #### Coverage
 
@@ -427,42 +396,29 @@ Even a 1-day window already covers 85% of slot update gas and 92% of account upd
 
 **Slots are more window-sensitive than accounts at the low end.** Cutting the window from
 30d to 1d drops slot coverage from 94% to 85%, but account coverage only from 97% to 92%.
-Account state (hot balances and nonces on routers and exchanges) is re-written many times a
-day, so almost every account update already has a same-day prior write.
-
-**Accounts churn hotter than slots.** Account update coverage runs ~2–3pp above slots at
-every window (97.0% vs 94.1% at T=30d, 99.0% vs 97.7% at T=365d), on ~50% more update volume
-(1.5B vs 1.0B mean updates at T=365d).
+Account state (hot contracts) is re-written many times during short windows, so almost every account update already has a same-day prior write.
 
 **The benefit saturates fast.** Slot coverage climbs from ~94% at T=30d to ~98% at T=365d,
 only +4pp for a 12× window, and accounts are flatter still (~97% to ~99%). Stretching past
 ~30d does little for update gas.
 
-**A ~30-day window is the sweet spot.** Coverage and Active-set size trade off against each
-other, and the trade is lopsided. Going from T=30d to T=365d buys only +3.6pp of slot
+**A ~30-day window is the sweet spot.** Going from T=30d to T=365d buys only +3.6pp of slot
 coverage (94.1% to 97.7%), but the Active set it has to keep warm grows from **2.8% to 24.2%
 of live slots** ([§5.1](#51-warmth-how-much-state-is-active)), roughly 9× more state in the
 cheap tier for almost no extra gas covered. A threshold around 30 days captures nearly all
-the repeat-update gas while keeping the Active set small, which is what a tiering scheme
+the warm-update gas while keeping the Active set small, which is what a tiering scheme
 wants.
-
-**Coverage is flat and high across the timeline.** Slot coverage sits in a 90–97% band at
-T=30 rising to ~97–98% at T=365, accounts ~97–99%, barely moving over 3.5 years and stepping
-at no fork, so the headline numbers are representative, not a lucky anchor. Cold updates are
-first-touch awakenings of dormant state, ~23M slots at T=365d reactivated after a year.
 
 ### 6.2 Read-side period bump
 Under a hypothetical extension where the first read of an inactive object also bumps its
 period, making reads write-like for users, which objects pay that cost?
 
-The bad-UX set is **objects whose first in-window event is a nonzero read**. For a slot
-that is an SLOAD returning a populated value, for an account a balance or nonce read
-returning more than zero. A write or a zero read as the first event costs nothing: writes
-already refresh the metadata, and zero reads target objects that do not exist yet.
+The bad-UX set is **objects whose first in-window event is a nonzero read**. For example, a slot that is an SLOAD returning a populated value, or an account a balance or nonce read
+returning nonzero. A write or a zero read as the first event costs nothing because writes
+already refresh the metadata, and zero reads do not populate the metadata.
 
 EIP-8188 updates the write-age on writes only, never on reads. A scheme that bumped the
-period on a read would cost as much as a write, so read-side
-bumping is rejected. This section is strictly a counterfactual.
+period on a read would cost as much as a write, so we want to see how much impact it incurs.
 
 #### Slots: first-operation classification
 
@@ -477,8 +433,7 @@ The share of slots in R∪W by what their first event is:
 
 At T=30d, **5.8% of slots in R∪W** would be hit by the read-side bump, their first event a
 populated SLOAD. This falls to **2.4% at T=365d**, because a wider window is more likely to
-contain an earlier write. The ~26–27% zero-read band is policy-irrelevant here, just
-structural probes on slots that do not exist yet ([§4.2](#42-read-structure)).
+contain an earlier write.
 
 #### Accounts: first-operation classification
 
@@ -492,31 +447,21 @@ The share of accounts in R∪W by what their first event is:
 | 365 | 90.91% | 1.19% | 7.90% |
 
 The bad-UX set is ~9% of warm accounts at T=30d, easing to ~8% at T=365d. The zero-read band
-stays small throughout (~1%). Most of the nonzero-read-first accounts are view-call targets:
-popular contracts checked read-only before a transaction decides whether to interact.
+stays small throughout (~1%).
 
 ![First-op = nonzero read over time](data/v2/sweep_first_op.png)
 
 Over the timeline the bad-UX set stays a minority, rising gently as the read-only set fills
-with populated accounts, with short-window excursions toward ~20% in early 2023 and 2025. It
-never inverts the write-first majority.
+with populated accounts, with short-window excursions toward ~20% in early 2023 and 2025.
 
 ## Conclusion
 
-State access is lopsided on both sides. Writes are dominated by creation, not modification:
-most written slots are born in the window and never touched again, so the write set is state
-growth more than churn. Reads are dominated by empty-slot probing: counted per distinct slot,
-the read-only set is mostly existence checks, not real state inspection. Once those probes
-are set aside, the populated warm set is essentially the write set.
+State operation is lopsided on both sides. Most slots are created and never touched again, so the write set is state growth more than churn. While Reads are mostly dominated by empty-slot probing.
 
-For a write-age tiering scheme, that shape is favourable. Only updates are repriceable, ~a
+For a write-age tiering scheme, only updates are repriceable, so it's roughly a
 quarter of writes or ~5% of state, and a short window covers them well: 94% of slot update
 gas (97% for accounts) already sits on warm state at T=30d, while keeping only ~3% of state
-in the Active tier. Wider windows buy little extra coverage for much more warm state. The
-picture is stable across 3.5 years and every fork, and the active fraction of state shrinks
-as the chain grows, so the case for separating an active set from dormant state strengthens
-over time.
-
+in the Active tier. Wider windows buy little extra coverage for much more warm state.
 ---
 
 ## Appendix A: SQL queries
