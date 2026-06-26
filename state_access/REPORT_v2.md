@@ -16,17 +16,24 @@ different ways of dealing with state growth, such as separation of dormant state
 
 ## 2. Summary
 
-- **Warm state is essentially the write set.** Populated reads (R⁺) add only 4–9% on top of
-  writes, so the warm set is the write set plus a sliver.
-- **Writes are update-heavy by event but creation-heavy by object.** Two-thirds of all write
-  events are updates to hot slots, yet ~55% of written slots are created once and never
-  touched again.
-- **Tiering covers update gas well.** 94% of slot update SSTOREs at T=30d (97% for accounts)
-  already sit on warm state, so the Inactive premium hits only ~3–6% of updates.
-- **Reads are mostly empty-slot probes.** ~83–93% of the read-only set only checks whether a
-  slot exists, not real state.
-- **The active fraction of state shrinks over time.** A fixed window touches a steadily
-  smaller share of a growing state, so the case for tiering strengthens as the chain ages.
+- **Writes are state growth, not churn.** About 55% of written slots are created once and
+  never touched again. The two-thirds of write events that are updates concentrate on a
+  small, repeatedly-hit hot set.
+- **Reads are mostly existence probes.** Counted per distinct slot, 83–93% of the read-only
+  set just checks whether a slot is set, not real state.
+- **State access is extremely concentrated.** The top 1% of read accounts has captured
+  ~96–98% of read accesses since 2022, led by stablecoins, DEXes, and block builders.
+- **The warm set is essentially the write set.** Once empty-slot probes are excluded,
+  populated reads add only 4–9% on top of writes.
+- **A write-age tier covers update gas cheaply.** 94% of slot update SSTOREs (97% for
+  accounts) already sit on warm state at a 30-day window, so the Inactive premium hits only
+  3–6% of updates.
+- **A ~30-day window is the sweet spot.** It covers ~94% of update gas while keeping only
+  ~3% of state Active. Wider windows buy little extra coverage for far more warm state.
+- **Extending the tier to reads would be a minor cost.** Only ~6% of warm slots and ~9% of
+  warm accounts would have a first read turned into a write-cost, a small if growing minority.
+- **The case strengthens over time.** The active fraction of state shrinks as the chain
+  grows, and the conclusions hold across 3.5 years and every fork.
 
 ## 3. Data and method
 
