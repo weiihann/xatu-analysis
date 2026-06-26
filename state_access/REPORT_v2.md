@@ -23,7 +23,7 @@ different ways of dealing with state growth, such as separation of dormant state
   set returns non-existing values. 
 - **State access is extremely concentrated.** The top 1% of read accounts has captured
   ~96–98% of read accesses since 2022, led by stablecoins, DEXes, and block builders.
-- **The warm set is essentially the write set.** Even with populated reads, it add only 4–9% on top of writes.
+- **The warm set is essentially the write set.** Even with populated reads, it adds only 4–9% on top of writes.
 - **A write-age tier covers update gas cheaply.** 94% of slot update SSTOREs (97% for
   accounts) already sit on warm state at a 30-day window, so the Inactive premium hits only
   3–6% of updates.
