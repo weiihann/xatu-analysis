@@ -29,8 +29,6 @@ different ways of dealing with state growth, such as separation of dormant state
   3–6% of updates.
 - **A ~30-day window is the sweet spot.** It covers ~94% of warm updates while keeping only
   ~3% of state Active. Wider windows buy little extra coverage for far more warm state.
-- **Extending the tier to reads would be a minor cost.** Only ~6% of warm slots and ~9% of
-  warm accounts would have a first read turned into a write cost.
 
 ## 3. Data and method
 
