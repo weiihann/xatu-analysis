@@ -4,7 +4,7 @@
 
 Every Ethereum transaction reads and writes pieces of the chain's **state**: account
 balances, nonces, codes, and the storage slots. As the chain grows, more of
-that state goes untouched for long stretches, which is why several proposals look at
+that state goes untouched for a long time, which is why several proposals look at
 different ways of dealing with state growth, such as separation of dormant state from active state, expiring dormant state and creating new forms of state. To best help with the research, this report is set out to answer:
 
 - What does state access and creation look like over Ethereum's history?
@@ -20,20 +20,17 @@ different ways of dealing with state growth, such as separation of dormant state
   never touched again. The two-thirds of write events that are updates concentrate on a
   small, repeatedly-hit hot set.
 - **Reads are mostly existence probes.** Counted per distinct slot, 83–93% of the read-only
-  set just checks whether a slot is set, not real state.
+  set returns non-existing values. 
 - **State access is extremely concentrated.** The top 1% of read accounts has captured
   ~96–98% of read accesses since 2022, led by stablecoins, DEXes, and block builders.
-- **The warm set is essentially the write set.** Once empty-slot probes are excluded,
-  populated reads add only 4–9% on top of writes.
+- **The warm set is essentially the write set.** Even with populated reads, it add only 4–9% on top of writes.
 - **A write-age tier covers update gas cheaply.** 94% of slot update SSTOREs (97% for
   accounts) already sit on warm state at a 30-day window, so the Inactive premium hits only
   3–6% of updates.
-- **A ~30-day window is the sweet spot.** It covers ~94% of update gas while keeping only
+- **A ~30-day window is the sweet spot.** It covers ~94% of warm updates while keeping only
   ~3% of state Active. Wider windows buy little extra coverage for far more warm state.
 - **Extending the tier to reads would be a minor cost.** Only ~6% of warm slots and ~9% of
-  warm accounts would have a first read turned into a write-cost, a small if growing minority.
-- **The case strengthens over time.** The active fraction of state shrinks as the chain
-  grows, and the conclusions hold across 3.5 years and every fork.
+  warm accounts would have a first read turned into a write cost.
 
 ## 3. Data and method
 
@@ -456,22 +453,18 @@ with populated accounts, with short-window excursions toward ~20% in early 2023 
 
 ## Conclusion
 
-Ethereum's state grows far faster than it churns. Most writes mint new state that is then
+Ethereum's state grows far faster than it churns. Most writes creates new state that is then
 never touched, and the share of state active in any fixed window keeps falling as the chain
-ages. The result is a large, cold tail of dormant state that every full node carries forever,
-while real activity stays concentrated on a small hot set led by a handful of stablecoins,
-DEXes, and builders.
+ages. The result is then a large proportion of dormant state that every stateful node carries forever, while real activity stays concentrated on a small hot set led by a handful of applications.
 
 This is exactly the shape that makes separating active from dormant state worthwhile. A
-write-age tier built on EIP-8188 puts almost all the gas-relevant write activity in a small
+write-age tier built puts almost all the gas-relevant write activity in a small
 Active set, a 30-day window already covers ~94% of update gas while keeping only ~3% of state
 warm, and marks the rest Inactive. Because the dormant tail grows with the chain, the value
 of treating it differently compounds over time.
 
 Tiering is one expression of that idea. The same structure underpins state expiry,
-statelessness, and any design that stops treating all state as equally live. The active set
-is small, well-bounded, and shrinking against the whole, and a chain that intends to scale
-its state sustainably will be built on exactly that asymmetry.
+partial statelessness, and any design that stops treating all state as equally live. The active set is small and bounded, so Ethereum should scale its state sustainably based on this asymmetry.
 
 ---
 
