@@ -336,10 +336,10 @@ all sources:
 | 3  | `0xdadb0d80178819f2319190d340ce9a924f783711` | 729M | BuilderNet |
 | 4  | `0xdac17f958d2ee523a2206206994597c13d831ec7` | 615M | USDT |
 | 5  | `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2` | 579M | WETH |
-| 6  | `0x43506849d7c04f9138d1a2050bbf3a0c054402dd` | 428M | contract (call target) |
+| 6  | `0x43506849d7c04f9138d1a2050bbf3a0c054402dd` | 428M | unknown |
 | 7  | `0x396343362be2a4da1ce0c1c210945346fb82aa49` | 241M | QuasarBuilder |
 | 8  | `0x000000000004444c5dc75cb358380d2e3de08a90` | 217M | Uniswap V4 PoolManager |
-| 9  | `0x609e0f0cb16e53878ba5e959a22fc7fcd81b124a` | 209M | router / aggregator |
+| 9  | `0x609e0f0cb16e53878ba5e959a22fc7fcd81b124a` | 209M | unknown |
 | 10 | `0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5` | 205M | beaverbuild |
 
 The head splits in two. **Block builders** (Titan, BuilderNet, QuasarBuilder, beaverbuild)
