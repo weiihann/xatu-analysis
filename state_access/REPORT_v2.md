@@ -363,17 +363,18 @@ whose storage slots are accessed most in the same window:
 | 1  | `0xdac17f958d2ee523a2206206994597c13d831ec7` | 1.31B | USDT |
 | 2  | `0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48` | 799M | USDC |
 | 3  | `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2` | 332M | WETH |
-| 4  | `0x06450dee7fd2fb8e39061434babcfc05599a6fb8` | 317M | unknown |
+| 4  | `0x06450dee7fd2fb8e39061434babcfc05599a6fb8` | 317M | XEN |
 | 5  | `0x000000000004444c5dc75cb358380d2e3de08a90` | 133M | Uniswap V4 PoolManager |
-| 6  | `0xc7bbec68d12a0d1830360f8ec58fa599ba1b0e9b` | 54M | unknown |
-| 7  | `0x2b591e99afe9f32eaa6214f7b7629768c40eeb39` | 52M | unknown |
-| 8  | `0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb` | 51M | unknown |
+| 6  | `0xc7bbec68d12a0d1830360f8ec58fa599ba1b0e9b` | 54M | Uniswap V3 USDC/USDT pool |
+| 7  | `0x2b591e99afe9f32eaa6214f7b7629768c40eeb39` | 52M | HEX |
+| 8  | `0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb` | 51M | Morpho |
 | 9  | `0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2` | 45M | Aave V3 Pool |
-| 10 | `0xe0554a476a092703abdb3ef35c80e0d76d32939f` | 44M | unknown |
+| 10 | `0xe0554a476a092703abdb3ef35c80e0d76d32939f` | 44M | Uniswap V3 USDC/ETH pool |
 
-This is the cleaner heavy-hitter view: token balance and allowance mappings (USDT, USDC,
-WETH), the Uniswap V4 singleton, and Aave V3. These are the contracts whose per-slot storage
-gets read and written far more than any other.
+This is the cleaner heavy-hitter view, four kinds of contract. Token balance and allowance
+mappings (USDT, USDC, WETH), DEX (the Uniswap V4 singleton and two busy Uniswap V3 pools),
+lending (Aave V3, Morpho), and the high-churn mint/stake tokens (XEN, HEX). These are the
+contracts whose per-slot storage gets read and written far more than any other.
 
 ## 6. EIP-8295: a state-tiering counterfactual
 
