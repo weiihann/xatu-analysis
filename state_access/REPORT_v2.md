@@ -355,6 +355,26 @@ So the account concentration head is a mix: a few dominant builders pulled up by
 crediting, plus the handful of contracts that absorb most call traffic. Excluding the
 `miner_fee` relationship would leave the contracts alone at the top.
 
+The slot side has no such artifact, since only contracts have storage. The ten contracts
+whose storage slots are accessed most in the same window:
+
+| rank | contract | slot accesses | what it is |
+|---:|---|---:|---|
+| 1  | `0xdac17f958d2ee523a2206206994597c13d831ec7` | 1.31B | USDT |
+| 2  | `0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48` | 799M | USDC |
+| 3  | `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2` | 332M | WETH |
+| 4  | `0x06450dee7fd2fb8e39061434babcfc05599a6fb8` | 317M | unknown |
+| 5  | `0x000000000004444c5dc75cb358380d2e3de08a90` | 133M | Uniswap V4 PoolManager |
+| 6  | `0xc7bbec68d12a0d1830360f8ec58fa599ba1b0e9b` | 54M | unknown |
+| 7  | `0x2b591e99afe9f32eaa6214f7b7629768c40eeb39` | 52M | unknown |
+| 8  | `0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb` | 51M | unknown |
+| 9  | `0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2` | 45M | Aave V3 Pool |
+| 10 | `0xe0554a476a092703abdb3ef35c80e0d76d32939f` | 44M | unknown |
+
+This is the cleaner heavy-hitter view: token balance and allowance mappings (USDT, USDC,
+WETH), the Uniswap V4 singleton, and Aave V3. These are the contracts whose per-slot storage
+gets read and written far more than any other.
+
 ## 6. EIP-8295: a state-tiering counterfactual
 
 The previous sections describe how state accesses and creations look over the course of
