@@ -16,20 +16,14 @@ different ways of dealing with state growth, such as separation of dormant state
 
 ## 2. Summary
 
-- **Warm populated state is essentially the write set.** At T=30d, writes touch 2.8% of
-  slots and 3.3% of accounts. Populated reads (R⁺) add only a few tenths of a percent, so
-  the populated warm set R⁺∪W is just 4–9% larger than W ([§5.1](#51-warmth-how-much-state-is-active)).
-- **Written slots are mostly created, not updated.** ~55% are create-only at every window,
-  which is state growth rather than churn. A tiering scheme only reprices updates, ~a quarter
-  of writes, so the repriceable set is ~5% of state at T=365d ([§4.1](#41-write-structure)).
+- **Warm state is essentially the write set.** Including the read-only set adds little to the warm set. 
+- **Write traffic is mostly updates.** Most of the write events modifying existing objects rather than creating new ones. TODO: this kinda doesn't fit
 - **Tiering covers update gas well.** 94% of slot update SSTOREs at T=30d (97% for accounts)
-  already sit on warm state, so the Inactive premium hits only ~3–6% of updates
-  ([§6.1](#61-warm-update-coverage)).
-- **Reads are mostly empty-slot probes.** Per distinct slot, ~83–93% of the read-only set
-  just checks whether a slot exists, not real state inspection ([§4.2](#42-read-structure)).
+  already sit on warm state, so the Inactive premium hits only ~3–6% of updates.
+- **Reads are mostly empty-slot probes.** ~83–93% of the read-only set
+  just checks whether a slot exists.
 - **The active fraction of state shrinks over time.** A fixed window touches a steadily
-  smaller share of a growing state, so the case for tiering strengthens as the chain ages
-  ([§5.1](#51-warmth-how-much-state-is-active)).
+  smaller share of a growing state, so the case for tiering strengthens as the chain ages.
 
 ## 3. Data and method
 
@@ -312,8 +306,7 @@ Account-read concentration is extreme and has been for the whole sample. The top
 
 #### Who sits at the top
 
-The ten most-accessed accounts in the T=365d window (block 24,870,000), by access count over
-all sources:
+The ten most-accessed (RuW) accounts in the T=365d window (block 24,870,000), by access count over all sources:
 
 | rank | account | accesses | what it is |
 |---:|---|---:|---|
@@ -334,8 +327,7 @@ top the list because post-Merge every transaction credits the block's fee recipi
 So the account concentration head is a mix: a few dominant builders pulled up by fee
 crediting, plus the handful of contracts that absorb most call traffic.
 
-The slot side has no such artifact, since only contracts have storage. The ten contracts
-whose storage slots are accessed most in the same window:
+The ten contracts whose storage slots are accessed most in the same window:
 
 | rank | contract | slot accesses | what it is |
 |---:|---|---:|---|
@@ -413,8 +405,7 @@ wants.
 Under a hypothetical extension where the first read of an inactive object also bumps its
 period, making reads write-like for users, which objects pay that cost?
 
-The bad-UX set is **objects whose first in-window event is a nonzero read**. For example, a slot whose first event is an SLOAD returning a populated value, or an account whose first event is a balance or nonce read returning nonzero. A write or a zero read as the first event costs nothing because writes
-already refresh the metadata, and zero reads do not populate the metadata.
+The bad-UX set is **objects whose first in-window event is a nonzero read**. For example, a slot whose first event is an SLOAD returning a populated value, or an account whose first event is a balance or nonce read returning nonzero. A write or a zero read as the first event costs nothing because writes already refresh the metadata, and zero reads do not populate the metadata.
 
 EIP-8188 updates the write-age on writes only, never on reads. A scheme that bumped the
 period on a read would cost as much as a write, so we want to see how much impact it incurs.
