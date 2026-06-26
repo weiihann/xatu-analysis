@@ -1,4 +1,4 @@
-# Ethereum state access: reads, writes, and the active set
+# The Anatomy of Ethereum's State Access
 
 ## 1. Introduction
 
