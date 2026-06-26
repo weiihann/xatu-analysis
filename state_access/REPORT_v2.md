@@ -15,12 +15,26 @@ different ways of dealing with state growth, such as separation of dormant state
 - How effective would an in-protocol state-tiering scheme be?
 
 ## 2. Summary
-TODO: be more concise, exxtract only the immportant ones
+
+- **Warm populated state is essentially the write set.** At T=30d, writes touch 2.8% of
+  slots and 3.3% of accounts. Populated reads (R⁺) add only a few tenths of a percent, so
+  the populated warm set R⁺∪W is just 4–9% larger than W ([§5.1](#51-warmth-how-much-state-is-active)).
+- **Written slots are mostly created, not updated.** ~55% are create-only at every window,
+  which is state growth rather than churn. A tiering scheme only reprices updates, ~a quarter
+  of writes, so the repriceable set is ~5% of state at T=365d ([§4.1](#41-write-structure)).
+- **Tiering covers update gas well.** 94% of slot update SSTOREs at T=30d (97% for accounts)
+  already sit on warm state, so the Inactive premium hits only ~3–6% of updates
+  ([§6.1](#61-warm-update-coverage)).
+- **Reads are mostly empty-slot probes.** Per distinct slot, ~83–93% of the read-only set
+  just checks whether a slot exists, not real state inspection ([§4.2](#42-read-structure)).
+- **The active fraction of state shrinks over time.** A fixed window touches a steadily
+  smaller share of a growing state, so the case for tiering strengthens as the chain ages
+  ([§5.1](#51-warmth-how-much-state-is-active)).
 
 ## 3. Data and method
 
 The unit of analysis is a trailing time window, with **writes** kept separate from
-**reads**. `T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and §5.1 and §6 also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are **storage slots**
+**reads**. `T` is the window length in days. The windowed tables throughout end at mainnet block **24,870,000**, and [§5.1](#51-warmth-how-much-state-is-active) and [§6](#6-eip-8295-a-state-tiering-counterfactual) also replay them weekly across post-Merge history. Windows are `T ∈ {1, 7, 14, 30, 60, 90, 180, 365}` days. Object types are **storage slots**
 `(contract, slot)` and **accounts** `(address)`.
 
 All source tables are extracted from [Xatu](https://github.com/ethpandaops/xatu).
@@ -41,7 +55,7 @@ For each `(T, object_type)`:
 - **R**: objects only read, never written, in the window.
 - **R⁺**: the objects in R whose reads return a nonzero (populated) value.
 - **R∪W = W + R**: all objects touched in the window. **R⁺∪W = W + R⁺** is the populated
-  warm set, used as the warmth measure in §5.1.
+  warm set, used as the warmth measure in [§5.1](#51-warmth-how-much-state-is-active).
 
 We write `|W|` for the number of objects in `W`, and likewise `|R|`.
 
@@ -103,7 +117,7 @@ Two things stand out:
 
 #### The lifecycle of a written slot
 
-Each write event is one of three **transition types** (values are net per transaction, §3):
+Each write event is one of three **transition types** (values are net per transaction, [§3](#3-data-and-method)):
 
 - **C** (create): `0 → x`, an empty slot becomes set.
 - **U** (update): `x → y`, a set slot's value changes.
@@ -194,8 +208,15 @@ over the weekly post-Merge sweep:
 
 ![Slot read composition over time](data/v2/sweep_read_composition.png)
 
-**Most of R is empty-slot probes**. Only ~7–18% of R is real state read (e.g. oracle parameters, config, immutable-style storage), and that share shrinks as the window widens.
-TODO: why the table shows 69.9% nonzero read but here shows ~7-18% real state read?
+**Most of R is empty-slot probes**. Only ~7–18% of R is real state read (e.g. oracle
+parameters, config, immutable-style storage), and that share shrinks as the window widens.
+
+This does not contradict the 69.9% nonzero in the all-history table above. They count
+different things. The 69.9% is **per event**: of every `SLOAD` ever, 70% hit a populated
+slot, because a small set of hot populated slots is read over and over. The ~7–18% here is
+**per distinct slot** in the read-only set R: most slots that are only read in a window are
+one-shot existence probes, each hit once. Event-weighted, populated reads dominate.
+Object-weighted, empty probes do.
 
 ## 5. Warmth and concentration
 
@@ -257,7 +278,7 @@ gradually, more on the account side than the slot side.
 ### 5.2 Concentration
 
 For each access set and window, the share of accesses captured by the top 1% of objects.
-Accesses are per-(tx, object) events (§3).
+Accesses are per-(tx, object) events ([§3](#3-data-and-method)).
 
 ![Concentration top-1%, slots](data/v2/q3_concentration_top1_slot.png)
 ![Concentration top-1%, accounts](data/v2/q3_concentration_top1_account.png)
@@ -305,7 +326,8 @@ rose more gently (~78% to ~88% at T=365).
 
 ## 6. EIP-8295: a state-tiering counterfactual
 
-The previous sections gave us insights into how state accesses and creations look like over the course of Ethereum's history. This section attemps to explore the effectiveness of a state tiering scheme.
+The previous sections describe how state accesses and creations look over the course of
+Ethereum's history. This section explores the effectiveness of a state-tiering scheme.
 
 [EIP-8188](https://eips.ethereum.org/EIPS/eip-8188) adds a
 `last_written_block` field to every account and storage slot, consensus-level metadata
@@ -314,8 +336,11 @@ recording when each piece of state was last mutated. It changes no gas costs by 
 
 ### 6.1 Warm-update coverage
 
-TODO: expand on this
-The measurement below instead promotes a slot the moment it is first warmed inside the window.
+Set membership alone cannot answer the gas question, which is per event, not per object: of
+the update gas spent in a window, what share would price as Active? A naive check against a
+static past-window set double-counts the cold tier, judging a slot re-written several times
+in the window as cold every time. The measurement below instead promotes a slot the moment
+it is first warmed inside the window, so only its first touch can be cold.
 
 #### Definition
 
@@ -353,7 +378,13 @@ every window (97.0% vs 94.1% at T=30d, 99.0% vs 97.7% at T=365d), on ~50% more u
 only +4pp for a 12× window, and accounts are flatter still (~97% to ~99%). Stretching past
 ~30d does little for update gas.
 
-TODO: what's the best window? I guess it's 30 days because 97% of the updates are already warm but we keep relative less state compared to the higher windows.
+**A ~30-day window is the sweet spot.** Coverage and Active-set size trade off against each
+other, and the trade is lopsided. Going from T=30d to T=365d buys only +3.6pp of slot
+coverage (94.1% to 97.7%), but the Active set it has to keep warm grows from **2.8% to 24.2%
+of live slots** ([§5.1](#51-warmth-how-much-state-is-active)), roughly 9× more state in the
+cheap tier for almost no extra gas covered. A threshold around 30 days captures nearly all
+the repeat-update gas while keeping the Active set small, which is what a tiering scheme
+wants.
 
 **Coverage is flat and high across the timeline.** Slot coverage sits in a 90–97% band at
 T=30 rising to ~97–98% at T=365, accounts ~97–99%, barely moving over 3.5 years and stepping
@@ -387,7 +418,7 @@ The share of slots in R∪W by what their first event is:
 At T=30d, **5.8% of slots in R∪W** would be hit by the read-side bump, their first event a
 populated SLOAD. This falls to **2.4% at T=365d**, because a wider window is more likely to
 contain an earlier write. The ~26–27% zero-read band is policy-irrelevant here, just
-structural probes on slots that do not exist yet (§4.2).
+structural probes on slots that do not exist yet ([§4.2](#42-read-structure)).
 
 #### Accounts: first-operation classification
 
@@ -412,7 +443,19 @@ never inverts the write-first majority.
 
 ## Conclusion
 
-TODO
+State access is lopsided on both sides. Writes are dominated by creation, not modification:
+most written slots are born in the window and never touched again, so the write set is state
+growth more than churn. Reads are dominated by empty-slot probing: counted per distinct slot,
+the read-only set is mostly existence checks, not real state inspection. Once those probes
+are set aside, the populated warm set is essentially the write set.
+
+For a write-age tiering scheme, that shape is favourable. Only updates are repriceable, ~a
+quarter of writes or ~5% of state, and a short window covers them well: 94% of slot update
+gas (97% for accounts) already sits on warm state at T=30d, while keeping only ~3% of state
+in the Active tier. Wider windows buy little extra coverage for much more warm state. The
+picture is stable across 3.5 years and every fork, and the active fraction of state shrinks
+as the chain grows, so the case for separating an active set from dormant state strengthens
+over time.
 
 ---
 
@@ -511,8 +554,8 @@ GROUP BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
 ORDER BY n_w_create, n_w_update, n_w_delete, n_r_zero, n_r_nonzero
 ```
 
-The W_mixed decomposition (§4.1) and R returned-value split (§4.2) are derived in Python from
-this histogram, no extra query.
+The W_mixed decomposition ([§4.1](#41-write-structure)) and R returned-value split
+([§4.2](#42-read-structure)) are derived in Python from this histogram, no extra query.
 
 ### Account histogram (warmth, concentration)
 
@@ -762,8 +805,10 @@ state_access/data/v2/
 Two scalar-summary SQL builders (`slot_sweep_summary`, `account_sweep_summary` in
 `queries_v2.py`) reuse the per-key CTEs of the warmth and structure histograms but push the classification
 into the outer `SELECT`, so each `(anchor, T)` cell returns one row of ~20 counts instead of
-a 100k-row histogram. Concentration (§5.2) is reduced in-process by a tie-aware exact top-N
-band reduction (`sweep_concentration.py`). §6.1 and §6.2 reuse the existing scalar builders.
+a 100k-row histogram. Concentration ([§5.2](#52-concentration)) is reduced in-process by a
+tie-aware exact top-N band reduction (`sweep_concentration.py`).
+[§6.1](#61-warm-update-coverage) and [§6.2](#62-read-side-period-bump) reuse the existing
+scalar builders.
 The
 driver `collect_v2_sweep.py` walks weekly anchors newest-first (so the latest anchor lands
 first and self-verifies), checkpoints one wide row per anchor with atomic temp+rename, and
