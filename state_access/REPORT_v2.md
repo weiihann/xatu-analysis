@@ -16,12 +16,15 @@ different ways of dealing with state growth, such as separation of dormant state
 
 ## 2. Summary
 
-- **Warm state is essentially the write set.** Including the read-only set adds little to the warm set. 
-- **Write traffic is mostly updates.** Most of the write events modifying existing objects rather than creating new ones. TODO: this kinda doesn't fit
+- **Warm state is essentially the write set.** Populated reads (R⁺) add only 4–9% on top of
+  writes, so the warm set is the write set plus a sliver.
+- **Writes are update-heavy by event but creation-heavy by object.** Two-thirds of all write
+  events are updates to hot slots, yet ~55% of written slots are created once and never
+  touched again.
 - **Tiering covers update gas well.** 94% of slot update SSTOREs at T=30d (97% for accounts)
   already sit on warm state, so the Inactive premium hits only ~3–6% of updates.
-- **Reads are mostly empty-slot probes.** ~83–93% of the read-only set
-  just checks whether a slot exists.
+- **Reads are mostly empty-slot probes.** ~83–93% of the read-only set only checks whether a
+  slot exists, not real state.
 - **The active fraction of state shrinks over time.** A fixed window touches a steadily
   smaller share of a growing state, so the case for tiering strengthens as the chain ages.
 
@@ -446,12 +449,23 @@ with populated accounts, with short-window excursions toward ~20% in early 2023 
 
 ## Conclusion
 
-State operation is lopsided on both sides. Most slots are created and never touched again, so the write set is state growth more than churn, while reads are mostly empty-slot probing.
+Ethereum's state grows far faster than it churns. Most writes mint new state that is then
+never touched, and the share of state active in any fixed window keeps falling as the chain
+ages. The result is a large, cold tail of dormant state that every full node carries forever,
+while real activity stays concentrated on a small hot set led by a handful of stablecoins,
+DEXes, and builders.
 
-For a write-age tiering scheme, only updates are repriceable, so it's roughly a
-quarter of writes or ~5% of state, and a short window covers them well: 94% of slot update
-gas (97% for accounts) already sits on warm state at T=30d, while keeping only ~3% of state
-in the Active tier. Wider windows buy little extra coverage for much more warm state.
+This is exactly the shape that makes separating active from dormant state worthwhile. A
+write-age tier built on EIP-8188 puts almost all the gas-relevant write activity in a small
+Active set, a 30-day window already covers ~94% of update gas while keeping only ~3% of state
+warm, and marks the rest Inactive. Because the dormant tail grows with the chain, the value
+of treating it differently compounds over time.
+
+Tiering is one expression of that idea. The same structure underpins state expiry,
+statelessness, and any design that stops treating all state as equally live. The active set
+is small, well-bounded, and shrinking against the whole, and a chain that intends to scale
+its state sustainably will be built on exactly that asymmetry.
+
 ---
 
 ## Appendix A: SQL queries
