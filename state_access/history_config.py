@@ -52,7 +52,7 @@ def anchors(w: int = DEFAULT_W) -> list[int]:
 
 def parquet_for(w: int = DEFAULT_W) -> Path:
     """Output parquet path for a window's sweep (e.g. data/history_w90.parquet)."""
-    return DATA_DIR / f"history_w{w}.parquet"
+    return DATA_DIR / "v1" / f"history_w{w}.parquet"
 
 
 def block_to_date(block: int) -> datetime:

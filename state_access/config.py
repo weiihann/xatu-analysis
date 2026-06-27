@@ -21,3 +21,4 @@ STORAGE_WRITE_WINDOWS = [1, 7, 14, 30, 60]
 UPDATE_WINDOWS = [1, 7, 14, 30, 60]
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR_V1 = DATA_DIR / "v1"
