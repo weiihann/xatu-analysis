@@ -1,6 +1,6 @@
 import pandas as pd
 
-from state_access.collect_v2_sweep import build_row, remaining_anchors
+from state_access.v2.collect_sweep import build_row, remaining_anchors
 
 
 def test_remaining_anchors_skips_done():

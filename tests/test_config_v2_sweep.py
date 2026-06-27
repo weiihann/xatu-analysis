@@ -1,4 +1,4 @@
-from state_access import config_v2 as cfg
+from state_access.v2 import config as cfg
 
 
 def test_sweep_windows_grid():
