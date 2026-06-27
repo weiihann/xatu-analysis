@@ -3,8 +3,8 @@ import math
 import pandas as pd
 import pytest
 
-from state_access.config_v2 import DATA_DIR_V2
-from state_access.sweep_concentration import concentration_shares
+from state_access.v2.config import DATA_DIR_V2
+from state_access.v2.sweep_concentration import concentration_shares
 
 
 @pytest.mark.parametrize("obj", ["slot", "account"])

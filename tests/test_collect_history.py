@@ -1,6 +1,6 @@
 import pandas as pd
 
-from state_access import collect_history as ch
+from state_access.v1 import collect_history as ch
 
 
 def test_remaining_anchors_excludes_done():

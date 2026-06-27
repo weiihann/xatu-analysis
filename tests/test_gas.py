@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from state_access.collect_gas import daily_gas_query, trailing_window_sum
+from state_access.v1.collect_gas import daily_gas_query, trailing_window_sum
 
 
 def test_daily_gas_query_shape() -> None:

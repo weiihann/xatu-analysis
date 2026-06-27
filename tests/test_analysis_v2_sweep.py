@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from state_access.analysis_v2_sweep import verify_rows
+from state_access.v2.analysis_sweep import verify_rows
 
 
 def _ok_row():
@@ -54,7 +54,7 @@ def test_verify_rows_catches_broken_acct_additivity():
 
 
 def test_verify_against_snapshot_catches_mismatch(tmp_path, monkeypatch):
-    import state_access.analysis_v2_sweep as mod
+    import state_access.v2.analysis_sweep as mod
     ref = pd.DataFrame([{"window_days": 30, "W": 11, "R": 4,
                          "total_updates": 9, "warm_updates": 8}])
     ref.to_parquet(tmp_path / "q1_warmth_slot_typed.parquet", index=False)
@@ -67,7 +67,7 @@ def test_verify_against_snapshot_catches_mismatch(tmp_path, monkeypatch):
 
 
 def test_verify_against_snapshot_tolerates_small_upd_drift(tmp_path, monkeypatch):
-    import state_access.analysis_v2_sweep as mod
+    import state_access.v2.analysis_sweep as mod
     ref_typed = pd.DataFrame([{"window_days": 30, "W": 10, "R": 4}])
     ref_acct = pd.DataFrame([{"window_days": 30, "W": 3}])
     ref_upd = pd.DataFrame([{"window_days": 30, "total_updates": 9_000_000, "warm_updates": 8}])
@@ -84,7 +84,7 @@ def test_verify_against_snapshot_tolerates_small_upd_drift(tmp_path, monkeypatch
 
 
 def test_verify_against_snapshot_rejects_large_upd_drift(tmp_path, monkeypatch):
-    import state_access.analysis_v2_sweep as mod
+    import state_access.v2.analysis_sweep as mod
     ref_typed = pd.DataFrame([{"window_days": 30, "W": 10, "R": 4}])
     ref_acct = pd.DataFrame([{"window_days": 30, "W": 3}])
     ref_upd = pd.DataFrame([{"window_days": 30, "total_updates": 9_000_000, "warm_updates": 8}])
