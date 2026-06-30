@@ -460,6 +460,62 @@ FROM per_slot
 """
 
 
+def slot_read_through(bn_now: int, days: int) -> str:
+    """Classify each populated (nonzero) slot read as warm or cold under two caching rules.
+
+    Models a primary store that holds an "active set" and asks which populated reads it can
+    serve. Two activeness rules, computed in one pass:
+
+    - **write-age** (EIP-8188): the slot is warm if it had a create or update earlier in the
+      window. The read-cache analog of `slot_update_coverage`.
+    - **read-age** (RPC-style cache): the slot is warm if it had any earlier read, create, or
+      update in the window. The first access on a slot is cold, every later read is warm.
+
+    Ordering is `(block, transaction_index)` with reads placed *before* same-tx writes
+    (op-priority +0 for reads, +1 for writes), so a read sees pre-transaction state and its
+    own coupled `SSTORE` does not warm it. Deletions never warm (a deleted slot reads zero,
+    so it cannot back a nonzero read). Per-slot warming thresholds are window-min functions;
+    `toUInt64(0xFFFFFFFFFFFFFFFF)` is the no-such-event sentinel.
+
+    Returns one row: `(total_nz, writeage_warm, readage_warm)`. Cold = total_nz - warm.
+    """
+    bn_lo, bn_hi = _window(bn_now, days)
+    return f"""
+WITH ev AS (
+    SELECT
+        cityHash64(address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 1 AS eo,
+        toUInt8(from_value != '{_ZERO}' AND to_value != '{_ZERO}') AS is_update,
+        toUInt8(from_value =  '{_ZERO}' AND to_value != '{_ZERO}') AS is_create,
+        toUInt8(0) AS is_read,
+        toUInt8(0) AS rnz
+    FROM canonical_execution_storage_diffs
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+    UNION ALL
+    SELECT
+        cityHash64(contract_address, slot) AS h,
+        toUInt64(block_number) * 1000000 + toUInt64(transaction_index) * 10 + 0 AS eo,
+        toUInt8(0), toUInt8(0),
+        toUInt8(1) AS is_read,
+        toUInt8(value != '{_ZERO}') AS rnz
+    FROM canonical_execution_storage_reads
+    WHERE meta_network_name = '{NETWORK}' AND block_number BETWEEN {bn_lo} AND {bn_hi}
+),
+ww AS (
+    SELECT
+        eo, is_read, rnz,
+        min(if(is_create OR is_update, eo, toUInt64(0xFFFFFFFFFFFFFFFF)))            OVER (PARTITION BY h) AS first_cu,
+        min(if(is_read OR is_create OR is_update, eo, toUInt64(0xFFFFFFFFFFFFFFFF))) OVER (PARTITION BY h) AS first_rcu
+    FROM ev
+)
+SELECT
+    countIf(is_read = 1 AND rnz = 1)                   AS total_nz,
+    countIf(is_read = 1 AND rnz = 1 AND eo > first_cu)  AS writeage_warm,
+    countIf(is_read = 1 AND rnz = 1 AND eo > first_rcu) AS readage_warm
+FROM ww
+"""
+
+
 def account_update_coverage(bn_now: int, days: int) -> str:
     """Per-window warm/cold split of account update events, the account analog of
     `slot_update_coverage`.
