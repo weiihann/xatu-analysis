@@ -19,8 +19,8 @@ different ways of dealing with state growth, such as separation of dormant state
 - **Writes are state growth, not churn.** About 55% of written slots are created once and
   never touched again. The two-thirds of write events that are updates concentrate on a
   small, repeatedly-hit hot set.
-- **Reads are mostly existence probes.** Counted per distinct slot, 83–93% of the read-only
-  set returns non-existing values. 
+- **The read-only set is small and mostly empty probes.** Slots read but never written are
+  under 8% of state, and 83–93% of those are existence checks rather than populated reads.
 - **State access is extremely concentrated.** The top 1% of read accounts has captured
   ~96–98% of read accesses since 2022, led by stablecoins, DEXes, and block builders.
 - **The warm set is essentially the write set.** Even with populated reads, it adds only 4–9% on top of writes.
