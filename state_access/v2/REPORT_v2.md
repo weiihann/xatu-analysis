@@ -210,6 +210,39 @@ slot, because a small set of hot populated slots is read over and over. The ~7�
 one-shot existence probes, each hit once. Weighted by read events, populated reads dominate.
 Weighted by objects, empty probes do take up a larger share.
 
+#### Read-through: which reads a cache would serve
+
+The splits above are object-weighted. For a storage or caching question the unit is the read
+event: of all populated (nonzero) slot reads, how many could a primary store holding an
+"active set" serve, and how many miss to secondary storage? That depends on how the active
+set is defined. We compare two rules at T=30 across the post-Merge sweep. A populated read is
+**warm** if its slot was already in the active set when the read happened:
+
+- **write-age** (the EIP-8188 criterion): the slot had a create or update earlier in the
+  window.
+- **read-age** (a read cache): the slot had any earlier read, create, or update.
+
+![Populated-read hit rate over time, read-age vs write-age](../data/v2/read_through_hitrate.png)
+
+| criterion | populated reads warm (sweep-mean) | over time |
+|---|---:|---|
+| read-age | ~96% | flat |
+| write-age | ~58% | ~65% (2023) → ~55% (2026) |
+
+A read-age cache serves nearly all populated reads (~96%), but that is close to tautological:
+any set that gets reread looks warm. The informative figure there is the ~4% cold, the
+genuine first-touch reads of state not seen in the last 30 days.
+
+The write-age active set is the interesting one. It serves only ~58% of populated reads, and
+the share is falling, from ~65% in 2023 to ~55% by 2026. As the chain accumulates
+dormant-but-still-read state (config, immutable-style storage, balances that are queried but
+no longer written), a growing fraction of populated reads land on slots that are not in the
+write-active set. So the write-age criterion, which prices write gas well
+([§6.1](#61-warm-update-coverage)), is a weak and worsening predictor of read demand. Anything
+whose job is to serve reads, an RPC provider or a stateless client's access layer, would want
+to cache by read-recency rather than write-recency, and the gap only widens as the chain
+grows.
+
 ## 5. Warmth and concentration
 
 This section checks how much of the state is "warm" (touched in a
